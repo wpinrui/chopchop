@@ -12,10 +12,14 @@ const App: React.FC = () => {
   const projectName = useSelector((state: RootState) => state.project.name);
   const mediaBinRef = useRef<MediaBinHandle>(null);
 
-  // Layout state
+  // Layout state - Top row is 1.5x bottom row = 60% height
   const [topRowHeight, setTopRowHeight] = useState(60); // percentage
-  const [topLeftWidth, setTopLeftWidth] = useState(25); // percentage
-  const [bottomLeftWidth, setBottomLeftWidth] = useState(25); // percentage
+  const [topLeftWidth, setTopLeftWidth] = useState(50); // percentage - half/half
+  const [bottomLeftWidth, setBottomLeftWidth] = useState(30); // percentage - 3:7 ratio
+
+  // Tab states
+  const [topLeftTab, setTopLeftTab] = useState<'source' | 'effects'>('source');
+  const [bottomLeftTab, setBottomLeftTab] = useState<'media' | 'effects-browser' | 'markers' | 'history'>('media');
 
   // Global keyboard shortcuts
   useEffect(() => {
@@ -118,13 +122,37 @@ const App: React.FC = () => {
       </div>
 
       <div className="app-body">
-        {/* Top row: Effects/Inspector (left) | Sequence Preview (right) */}
+        {/* Top row: Source/Effects (left) | Sequence Preview (right) */}
         <div className="top-row" style={{ height: `${topRowHeight}%` }}>
           <div className="panel effects-panel" style={{ width: `${topLeftWidth}%` }}>
-            <div className="panel-header">Effects / Inspector</div>
+            <div className="panel-header">
+              <div className="tab-bar">
+                <button
+                  className={`tab ${topLeftTab === 'source' ? 'active' : ''}`}
+                  onClick={() => setTopLeftTab('source')}
+                >
+                  Source Clip
+                </button>
+                <button
+                  className={`tab ${topLeftTab === 'effects' ? 'active' : ''}`}
+                  onClick={() => setTopLeftTab('effects')}
+                >
+                  Effect Controls
+                </button>
+              </div>
+            </div>
             <div className="panel-content">
-              {/* TODO: Effects and clip inspector */}
-              <p>Effects controls and clip properties</p>
+              {topLeftTab === 'source' ? (
+                <>
+                  {/* TODO: Source clip preview */}
+                  <p>Source clip preview and controls</p>
+                </>
+              ) : (
+                <>
+                  {/* TODO: Effect controls */}
+                  <p>Effect controls and properties</p>
+                </>
+              )}
             </div>
           </div>
 
@@ -143,12 +171,42 @@ const App: React.FC = () => {
 
         <div className="horizontal-resizer" onMouseDown={handleHorizontalResize} />
 
-        {/* Bottom row: Media Bin (left) | Timeline (right) */}
+        {/* Bottom row: Media Bin/Effects Browser/etc (left) | Timeline (right) */}
         <div className="bottom-row">
           <div className="panel media-bin-panel" style={{ width: `${bottomLeftWidth}%` }}>
-            <div className="panel-header">Media Bin</div>
+            <div className="panel-header">
+              <div className="tab-bar">
+                <button
+                  className={`tab ${bottomLeftTab === 'media' ? 'active' : ''}`}
+                  onClick={() => setBottomLeftTab('media')}
+                >
+                  Media Bin
+                </button>
+                <button
+                  className={`tab ${bottomLeftTab === 'effects-browser' ? 'active' : ''}`}
+                  onClick={() => setBottomLeftTab('effects-browser')}
+                >
+                  Effects
+                </button>
+                <button
+                  className={`tab ${bottomLeftTab === 'markers' ? 'active' : ''}`}
+                  onClick={() => setBottomLeftTab('markers')}
+                >
+                  Markers
+                </button>
+                <button
+                  className={`tab ${bottomLeftTab === 'history' ? 'active' : ''}`}
+                  onClick={() => setBottomLeftTab('history')}
+                >
+                  History
+                </button>
+              </div>
+            </div>
             <div className="panel-content media-bin-content">
-              <MediaBin ref={mediaBinRef} />
+              {bottomLeftTab === 'media' && <MediaBin ref={mediaBinRef} />}
+              {bottomLeftTab === 'effects-browser' && <p>Effects browser</p>}
+              {bottomLeftTab === 'markers' && <p>Markers panel</p>}
+              {bottomLeftTab === 'history' && <p>History / Undo stack</p>}
             </div>
           </div>
 
