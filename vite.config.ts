@@ -12,14 +12,6 @@ export default defineConfig({
       {
         // Main process entry point
         entry: 'electron/main.ts',
-        vite: {
-          build: {
-            outDir: 'dist-electron',
-            rollupOptions: {
-              external: ['electron'],
-            },
-          },
-        },
       },
       {
         // Preload script
@@ -28,14 +20,6 @@ export default defineConfig({
           // Notify the Renderer-Process to reload the page when the Preload-Scripts build is complete,
           // instead of restarting the entire Electron App.
           options.reload();
-        },
-        vite: {
-          build: {
-            outDir: 'dist-electron',
-            rollupOptions: {
-              external: ['electron'],
-            },
-          },
         },
       },
     ]),

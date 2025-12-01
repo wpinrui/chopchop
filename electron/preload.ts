@@ -15,11 +15,26 @@ const electronAPI = {
   getVersion: () => ipcRenderer.invoke('app:getVersion'),
   getPath: (name: string) => ipcRenderer.invoke('app:getPath', name),
 
-  // TODO: Add more APIs as we build features:
-  // - File system operations (open, save, import media)
-  // - ffmpeg operations
-  // - Project operations
-  // - Export operations
+  // FFmpeg
+  ffmpeg: {
+    check: () => ipcRenderer.invoke('ffmpeg:check'),
+    getVersion: () => ipcRenderer.invoke('ffmpeg:getVersion'),
+  },
+
+  // Media operations
+  media: {
+    showImportDialog: () => ipcRenderer.invoke('media:showImportDialog'),
+    probe: (filePath: string) => ipcRenderer.invoke('media:probe', filePath),
+  },
+
+  // File operations
+  file: {
+    readText: (filePath: string) => ipcRenderer.invoke('file:readText', filePath),
+    writeText: (filePath: string, content: string) =>
+      ipcRenderer.invoke('file:writeText', filePath, content),
+    showSaveDialog: (options: any) =>
+      ipcRenderer.invoke('file:showSaveDialog', options),
+  },
 };
 
 // Expose the API to the renderer process

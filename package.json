@@ -3,9 +3,8 @@
   "version": "0.1.0",
   "description": "A free, open-source video editor for Windows that wraps a Premiere-style interface around ffmpeg",
   "main": "dist-electron/main.js",
-  "type": "module",
   "scripts": {
-    "dev": "node scripts/dev.js",
+    "dev": "node scripts/dev.cjs",
     "build": "tsc && vite build",
     "build:electron": "tsc -p tsconfig.electron.json",
     "package": "electron-builder",

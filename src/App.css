@@ -85,9 +85,13 @@
 }
 
 /* Specific panels */
-.media-bin {
+.media-bin-panel {
   width: 300px;
   min-width: 200px;
+}
+
+.media-bin-content {
+  padding: 0;
 }
 
 .viewer {

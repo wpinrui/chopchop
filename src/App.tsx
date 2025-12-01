@@ -5,6 +5,7 @@
 import React from 'react';
 import { useSelector } from 'react-redux';
 import type { RootState } from './store';
+import MediaBin from './components/MediaBin/MediaBin';
 import './App.css';
 
 const App: React.FC = () => {
@@ -19,11 +20,10 @@ const App: React.FC = () => {
 
       <div className="app-body">
         <div className="panel-container">
-          <div className="panel media-bin">
+          <div className="panel media-bin-panel">
             <div className="panel-header">Media Bin</div>
-            <div className="panel-content">
-              {/* TODO: Media bin component */}
-              <p>Media bin will appear here</p>
+            <div className="panel-content media-bin-content">
+              <MediaBin />
             </div>
           </div>
 
