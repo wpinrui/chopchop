@@ -2,14 +2,30 @@
  * ChopChop Main App Component
  */
 
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useSelector } from 'react-redux';
 import type { RootState } from './store';
-import MediaBin from './components/MediaBin/MediaBin';
+import MediaBin, { type MediaBinHandle } from './components/MediaBin/MediaBin';
 import './App.css';
 
 const App: React.FC = () => {
   const projectName = useSelector((state: RootState) => state.project.name);
+  const mediaBinRef = useRef<MediaBinHandle>(null);
+
+  // Global keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+I - Import Media
+      if ((e.ctrlKey || e.metaKey) && e.key === 'i') {
+        e.preventDefault();
+        // Trigger import via MediaBin component
+        mediaBinRef.current?.triggerImport();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   return (
     <div className="app">
@@ -23,7 +39,7 @@ const App: React.FC = () => {
           <div className="panel media-bin-panel">
             <div className="panel-header">Media Bin</div>
             <div className="panel-content media-bin-content">
-              <MediaBin />
+              <MediaBin ref={mediaBinRef} />
             </div>
           </div>
 

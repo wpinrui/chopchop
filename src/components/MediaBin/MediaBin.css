@@ -7,6 +7,41 @@
   flex-direction: column;
   height: 100%;
   background-color: var(--bg-secondary);
+  position: relative;
+  transition: background-color 0.2s;
+}
+
+.media-bin.drag-over {
+  background-color: rgba(58, 131, 255, 0.1);
+}
+
+.drag-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  pointer-events: none;
+  border: 2px dashed var(--accent-blue);
+}
+
+.drag-overlay-content {
+  background-color: var(--bg-secondary);
+  padding: 24px 48px;
+  border-radius: 8px;
+  border: 2px solid var(--accent-blue);
+}
+
+.drag-overlay-content p {
+  margin: 0;
+  font-size: 16px;
+  color: var(--accent-blue);
+  font-weight: 500;
 }
 
 .media-bin-toolbar {

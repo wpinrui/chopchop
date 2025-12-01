@@ -4,16 +4,21 @@
  * Displays imported media files with thumbnails and metadata.
  */
 
-import React, { useCallback } from 'react';
+import React, { useCallback, useState, useImperativeHandle, forwardRef } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import type { RootState } from '../../store';
 import { addMediaItem } from '../../store/projectSlice';
 import type { MediaItem } from '@types';
 import './MediaBin.css';
 
-const MediaBin: React.FC = () => {
+export interface MediaBinHandle {
+  triggerImport: () => void;
+}
+
+const MediaBin = forwardRef<MediaBinHandle>((props, ref) => {
   const dispatch = useDispatch();
   const media = useSelector((state: RootState) => state.project.media);
+  const [isDragOver, setIsDragOver] = useState(false);
 
   const handleImport = useCallback(async () => {
     if (!window.electronAPI) {
@@ -58,6 +63,77 @@ const MediaBin: React.FC = () => {
     }
   }, [dispatch]);
 
+  // Expose import function to parent via ref
+  useImperativeHandle(ref, () => ({
+    triggerImport: handleImport,
+  }), [handleImport]);
+
+  // Drag and drop handlers
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Only set to false if we're leaving the media-bin itself, not a child
+    if (e.currentTarget === e.target) {
+      setIsDragOver(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+
+    if (!window.electronAPI) {
+      console.error('Electron API not available');
+      return;
+    }
+
+    const files = Array.from(e.dataTransfer.files);
+
+    // Process each dropped file
+    for (const file of files) {
+      try {
+        const filePath = file.path; // Electron provides the full path
+
+        const probeResult = await window.electronAPI.media.probe(filePath);
+
+        if (!probeResult.metadata) {
+          console.error('Failed to probe media:', filePath);
+          continue;
+        }
+
+        const fileName = file.name;
+
+        const mediaItem: MediaItem = {
+          id: `media-${Date.now()}-${Math.random()}`,
+          name: fileName,
+          path: filePath,
+          proxyPath: null,
+          type: probeResult.type,
+          duration: probeResult.duration,
+          metadata: probeResult.metadata,
+          thumbnailPath: probeResult.thumbnailDataUrl,
+        };
+
+        dispatch(addMediaItem(mediaItem));
+      } catch (error) {
+        console.error('Error importing dropped media:', error);
+      }
+    }
+  }, [dispatch]);
+
   const formatDuration = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
@@ -73,12 +149,26 @@ const MediaBin: React.FC = () => {
   };
 
   return (
-    <div className="media-bin">
+    <div
+      className={`media-bin ${isDragOver ? 'drag-over' : ''}`}
+      onDragOver={handleDragOver}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       <div className="media-bin-toolbar">
         <button className="import-button" onClick={handleImport}>
           Import Media
         </button>
       </div>
+
+      {isDragOver && (
+        <div className="drag-overlay">
+          <div className="drag-overlay-content">
+            <p>Drop media files here</p>
+          </div>
+        </div>
+      )}
 
       <div className="media-list">
         {media.length === 0 ? (
@@ -121,6 +211,8 @@ const MediaBin: React.FC = () => {
       </div>
     </div>
   );
-};
+});
+
+MediaBin.displayName = 'MediaBin';
 
 export default MediaBin;
