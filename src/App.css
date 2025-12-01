@@ -178,6 +178,10 @@
   min-width: 400px;
 }
 
+.timeline-content {
+  padding: 0;
+}
+
 .viewer-content {
   display: flex;
   align-items: center;

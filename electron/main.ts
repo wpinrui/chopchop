@@ -6,15 +6,12 @@
 
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { probeMediaFile, getMediaDuration, generateThumbnail, getMediaType } from './ffmpeg/probe';
 import { checkFFmpegAvailable, getFFmpegVersion } from './ffmpeg/runner';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
+// In CommonJS, __dirname is available directly
 // The built directory structure
 //
 // ├─┬─┬ dist
@@ -25,9 +22,6 @@ const __dirname = path.dirname(__filename);
 // │ │ └── preload.js
 // │
 process.env.DIST = path.join(__dirname, '../dist');
-process.env.VITE_PUBLIC = app.isPackaged
-  ? process.env.DIST
-  : path.join(process.env.DIST, '../public');
 
 let mainWindow: BrowserWindow | null = null;
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL'];
@@ -36,6 +30,11 @@ const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL'];
  * Creates the main application window
  */
 function createWindow() {
+  // Set VITE_PUBLIC after app is ready
+  process.env.VITE_PUBLIC = app.isPackaged
+    ? process.env.DIST
+    : path.join(process.env.DIST!, '../public');
+
   mainWindow = new BrowserWindow({
     width: 1600,
     height: 900,

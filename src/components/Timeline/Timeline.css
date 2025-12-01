@@ -1,0 +1,247 @@
+/**
+ * Timeline Styles
+ */
+
+.timeline {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background-color: var(--bg-primary);
+}
+
+/* Toolbar */
+.timeline-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-sm);
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.timeline-timecode {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  min-width: 100px;
+}
+
+.timeline-zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.timeline-zoom-controls button {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  transition: all 0.2s;
+}
+
+.timeline-zoom-controls button:hover {
+  background-color: var(--bg-hover);
+  border-color: var(--accent-blue);
+}
+
+.zoom-level {
+  font-size: 11px;
+  color: var(--text-secondary);
+  min-width: 40px;
+  text-align: center;
+}
+
+/* Timeline content area */
+.timeline-content {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Track headers (left side) */
+.timeline-track-headers {
+  width: 150px;
+  flex-shrink: 0;
+  background-color: var(--bg-secondary);
+  border-right: 1px solid var(--border-color);
+  overflow-y: auto;
+}
+
+.track-header {
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--spacing-sm);
+  border-bottom: 1px solid var(--border-color);
+  background-color: var(--bg-tertiary);
+}
+
+.track-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.track-controls {
+  display: flex;
+  gap: 4px;
+}
+
+.track-toggle {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.track-toggle:hover {
+  background-color: var(--bg-hover);
+  border-color: var(--accent-blue);
+  color: var(--text-primary);
+}
+
+/* Timeline area (right side) */
+.timeline-area {
+  flex: 1;
+  overflow: auto;
+  position: relative;
+  background-color: var(--bg-primary);
+}
+
+/* Time ruler */
+.timeline-ruler {
+  height: 30px;
+  position: relative;
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.ruler-marker {
+  position: absolute;
+  top: 0;
+  height: 100%;
+}
+
+.ruler-tick {
+  width: 1px;
+  height: 8px;
+  background-color: var(--border-light);
+}
+
+.ruler-label {
+  position: absolute;
+  top: 10px;
+  left: 4px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 10px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* Tracks */
+.timeline-tracks {
+  position: relative;
+}
+
+.track {
+  height: 60px;
+  position: relative;
+  border-bottom: 1px solid var(--border-color);
+  background-color: var(--bg-secondary);
+  transition: background-color 0.2s;
+}
+
+.track:hover {
+  background-color: rgba(58, 131, 255, 0.05);
+}
+
+/* Clips */
+.clip {
+  position: absolute;
+  top: 4px;
+  height: 52px;
+  background-color: #4a90e2;
+  border: 1px solid #3a7bc8;
+  border-radius: 3px;
+  cursor: pointer;
+  overflow: hidden;
+  transition: transform 0.1s;
+}
+
+.clip:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.clip-content {
+  padding: 4px 8px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+}
+
+.clip-name {
+  font-size: 11px;
+  font-weight: 500;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Playhead */
+.playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  pointer-events: none;
+  z-index: 100;
+}
+
+.playhead-handle {
+  position: absolute;
+  top: 0;
+  left: -6px;
+  width: 14px;
+  height: 14px;
+  background-color: var(--accent-blue);
+  border: 2px solid #fff;
+  border-radius: 2px;
+  cursor: ew-resize;
+  pointer-events: all;
+}
+
+.playhead-line {
+  position: absolute;
+  top: 14px;
+  left: 0;
+  width: 2px;
+  bottom: 0;
+  background-color: var(--accent-blue);
+  pointer-events: none;
+}

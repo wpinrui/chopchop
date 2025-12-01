@@ -178,7 +178,16 @@ const MediaBin = forwardRef<MediaBinHandle>((props, ref) => {
           </div>
         ) : (
           media.map((item) => (
-            <div key={item.id} className="media-item">
+            <div
+              key={item.id}
+              className="media-item"
+              draggable
+              onDragStart={(e) => {
+                // Store media item data for timeline drop
+                e.dataTransfer.setData('application/chopchop-media', JSON.stringify(item));
+                e.dataTransfer.effectAllowed = 'copy';
+              }}
+            >
               <div className="media-thumbnail">
                 {item.thumbnailPath ? (
                   <img src={item.thumbnailPath} alt={item.name} />

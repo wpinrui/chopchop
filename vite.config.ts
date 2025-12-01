@@ -12,10 +12,32 @@ export default defineConfig({
       {
         // Main process entry point
         entry: 'electron/main.ts',
+        vite: {
+          build: {
+            outDir: 'dist-electron',
+            rollupOptions: {
+              external: ['electron'],
+              output: {
+                format: 'cjs',
+              },
+            },
+          },
+        },
       },
       {
         // Preload script
         entry: 'electron/preload.ts',
+        vite: {
+          build: {
+            outDir: 'dist-electron',
+            rollupOptions: {
+              external: ['electron'],
+              output: {
+                format: 'cjs',
+              },
+            },
+          },
+        },
         onstart(options) {
           // Notify the Renderer-Process to reload the page when the Preload-Scripts build is complete,
           // instead of restarting the entire Electron App.

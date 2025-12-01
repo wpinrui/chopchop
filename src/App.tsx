@@ -3,14 +3,19 @@
  */
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { useSelector } from 'react-redux';
+import { useSelector, useDispatch } from 'react-redux';
 import type { RootState } from './store';
 import MediaBin, { type MediaBinHandle } from './components/MediaBin/MediaBin';
+import Timeline from './components/Timeline/Timeline';
+import { addTrack } from './store/timelineSlice';
 import './App.css';
 
 const App: React.FC = () => {
+  const dispatch = useDispatch();
   const projectName = useSelector((state: RootState) => state.project.name);
+  const tracks = useSelector((state: RootState) => state.timeline.tracks);
   const mediaBinRef = useRef<MediaBinHandle>(null);
+  const tracksInitialized = useRef(false);
 
   // Layout state - Top row is 1.5x bottom row = 60% height
   const [topRowHeight, setTopRowHeight] = useState(60); // percentage
@@ -20,6 +25,33 @@ const App: React.FC = () => {
   // Tab states
   const [topLeftTab, setTopLeftTab] = useState<'source' | 'effects'>('source');
   const [bottomLeftTab, setBottomLeftTab] = useState<'media' | 'effects-browser' | 'markers' | 'history'>('media');
+
+  // Initialize default tracks
+  useEffect(() => {
+    if (!tracksInitialized.current && tracks.length === 0) {
+      tracksInitialized.current = true;
+      // Add default video and audio tracks
+      dispatch(addTrack({
+        id: 'video-1',
+        name: 'Video 1',
+        type: 'video',
+        clips: [],
+        locked: false,
+        muted: false,
+        solo: false,
+      }));
+      dispatch(addTrack({
+        id: 'audio-1',
+        name: 'Audio 1',
+        type: 'audio',
+        clips: [],
+        locked: false,
+        muted: false,
+        solo: false,
+      }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run once on mount
 
   // Global keyboard shortcuts
   useEffect(() => {
@@ -214,9 +246,8 @@ const App: React.FC = () => {
 
           <div className="panel timeline-panel">
             <div className="panel-header">Timeline</div>
-            <div className="panel-content">
-              {/* TODO: Timeline component */}
-              <p>Timeline will appear here</p>
+            <div className="panel-content timeline-content">
+              <Timeline />
             </div>
           </div>
         </div>
