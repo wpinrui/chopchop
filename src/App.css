@@ -1,0 +1,132 @@
+/**
+ * ChopChop App Layout Styles
+ */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background-color: var(--bg-primary);
+}
+
+/* Header */
+.app-header {
+  display: flex;
+  align-items: center;
+  height: var(--header-height);
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  padding: 0 var(--spacing-md);
+  gap: var(--spacing-md);
+}
+
+.app-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--accent-blue);
+}
+
+.project-name {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* Body */
+.app-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.panel-container {
+  display: flex;
+  height: 50%;
+  gap: 1px;
+  background-color: var(--border-color);
+}
+
+.timeline-container {
+  flex: 1;
+  display: flex;
+  background-color: var(--border-color);
+  border-top: 1px solid var(--border-color);
+}
+
+/* Panels */
+.panel {
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg-secondary);
+  overflow: hidden;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  height: var(--panel-header-height);
+  padding: 0 var(--spacing-sm);
+  background-color: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-color);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.panel-content {
+  flex: 1;
+  padding: var(--spacing-md);
+  overflow: auto;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+/* Specific panels */
+.media-bin {
+  width: 300px;
+  min-width: 200px;
+}
+
+.viewer {
+  flex: 1;
+}
+
+.viewer-content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background-color: #000;
+}
+
+.viewer-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: var(--text-disabled);
+}
+
+.timeline {
+  flex: 1;
+}
+
+/* Footer */
+.app-footer {
+  height: var(--footer-height);
+  background-color: var(--bg-secondary);
+  border-top: 1px solid var(--border-color);
+}
+
+.status-bar {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 var(--spacing-sm);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
