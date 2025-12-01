@@ -1,0 +1,150 @@
+{
+  "$comment": "Manual keyword tags for ffmpeg capabilities. These supplement auto-generated tags from names and descriptions.",
+  
+  "filters": {
+    "video": {
+      "hflip": ["mirror", "horizontal", "flip", "reverse"],
+      "vflip": ["mirror", "vertical", "flip", "reverse", "upside"],
+      "transpose": ["rotate", "90", "portrait", "landscape", "orientation", "turn"],
+      "rotate": ["angle", "degrees", "spin", "tilt", "orientation"],
+      
+      "scale": ["resize", "size", "dimensions", "resolution", "shrink", "enlarge", "720p", "1080p", "4k"],
+      "crop": ["cut", "trim", "frame", "aspect", "letterbox", "remove"],
+      "pad": ["border", "margin", "letterbox", "pillarbox", "extend"],
+      
+      "colorbalance": ["color", "correction", "rgb", "grading", "tint", "warmth", "cool"],
+      "eq": ["brightness", "contrast", "saturation", "gamma", "exposure", "levels"],
+      "curves": ["color", "grading", "rgb", "lut", "tone"],
+      "lut3d": ["lut", "color", "grading", "cube", "look"],
+      "colorchannelmixer": ["color", "rgb", "swap", "channel"],
+      "hue": ["color", "saturation", "tint", "shift"],
+      
+      "boxblur": ["blur", "smooth", "soften", "gaussian"],
+      "gaussianblur": ["blur", "smooth", "soften"],
+      "smartblur": ["blur", "smooth", "edge"],
+      "unsharp": ["sharpen", "clarity", "detail", "crisp"],
+      
+      "chromakey": ["greenscreen", "green", "screen", "key", "transparency", "remove", "background"],
+      "colorkey": ["key", "transparency", "remove", "color", "background"],
+      
+      "drawtext": ["text", "title", "caption", "subtitle", "font", "label", "watermark"],
+      "drawbox": ["rectangle", "box", "shape", "border", "frame"],
+      
+      "overlay": ["composite", "layer", "stack", "pip", "picture"],
+      "blend": ["mix", "composite", "layer", "combine"],
+      
+      "fps": ["framerate", "speed", "smooth", "convert"],
+      "setpts": ["speed", "slow", "fast", "time", "remap", "reverse"],
+      "reverse": ["backwards", "rewind"],
+      "loop": ["repeat", "cycle", "gif"],
+      
+      "fade": ["fadein", "fadeout", "dissolve", "opacity"],
+      "xfade": ["transition", "dissolve", "wipe", "crossfade"],
+      
+      "trim": ["cut", "clip", "segment", "slice", "portion"],
+      "select": ["pick", "frames", "filter", "choose"],
+      
+      "noise": ["grain", "film", "texture", "static"],
+      "deband": ["banding", "gradient", "smooth"],
+      "deflicker": ["flicker", "stabilize", "smooth"],
+      "deshake": ["stabilize", "stabilization", "shake", "handheld", "smooth"],
+      "vidstab": ["stabilize", "stabilization", "shake", "handheld"],
+      
+      "format": ["pixel", "colorspace", "convert"],
+      "setsar": ["aspect", "ratio", "pixel"],
+      "setdar": ["aspect", "ratio", "display"],
+      
+      "thumbnail": ["preview", "poster", "frame"],
+      "tile": ["grid", "mosaic", "montage", "collage"],
+      "split": ["duplicate", "copy", "branch"],
+      
+      "zoompan": ["ken", "burns", "zoom", "pan", "motion"],
+      
+      "delogo": ["remove", "logo", "watermark", "clean"],
+      "removelogo": ["remove", "logo", "watermark", "clean"]
+    },
+    
+    "audio": {
+      "volume": ["gain", "loud", "quiet", "level", "amplitude"],
+      "loudnorm": ["normalize", "loudness", "level", "broadcast", "lufs"],
+      "dynaudnorm": ["normalize", "dynamic", "level", "compression"],
+      "compand": ["compress", "dynamic", "range", "limiter"],
+      
+      "afade": ["fade", "fadein", "fadeout"],
+      "acrossfade": ["crossfade", "transition", "blend", "mix"],
+      
+      "atrim": ["cut", "clip", "segment", "slice"],
+      "asetpts": ["speed", "slow", "fast", "time"],
+      "atempo": ["speed", "tempo", "fast", "slow", "pitch"],
+      "aloop": ["repeat", "cycle", "loop"],
+      "areverse": ["backwards", "reverse", "rewind"],
+      
+      "highpass": ["filter", "bass", "cut", "eq", "low"],
+      "lowpass": ["filter", "treble", "cut", "eq", "high"],
+      "equalizer": ["eq", "frequency", "band", "boost", "cut"],
+      "bass": ["low", "frequency", "boost", "eq"],
+      "treble": ["high", "frequency", "boost", "eq"],
+      
+      "aecho": ["echo", "delay", "reverb", "effect"],
+      "asubboost": ["bass", "sub", "low", "boost"],
+      "chorus": ["effect", "double", "thick"],
+      "flanger": ["effect", "modulation", "sweep"],
+      "vibrato": ["effect", "modulation", "wobble"],
+      "tremolo": ["effect", "modulation", "amplitude"],
+      
+      "silenceremove": ["silence", "remove", "trim", "detect"],
+      "silencedetect": ["silence", "detect", "find"],
+      
+      "amix": ["mix", "combine", "merge", "layer"],
+      "amerge": ["merge", "combine", "stereo", "channels"],
+      "pan": ["stereo", "mono", "channel", "mix", "left", "right"],
+      "channelsplit": ["stereo", "mono", "separate"],
+      
+      "anoisesrc": ["noise", "generate", "static"],
+      "sine": ["tone", "generate", "beep", "test"]
+    }
+  },
+  
+  "codecs": {
+    "video": {
+      "libx264": ["h264", "avc", "mp4", "web", "compatible", "cpu"],
+      "libx265": ["h265", "hevc", "efficient", "small", "cpu"],
+      "h264_nvenc": ["h264", "nvidia", "gpu", "fast", "hardware"],
+      "hevc_nvenc": ["h265", "hevc", "nvidia", "gpu", "fast", "hardware"],
+      "h264_qsv": ["h264", "intel", "quicksync", "gpu", "fast", "hardware"],
+      "hevc_qsv": ["h265", "hevc", "intel", "quicksync", "gpu", "fast", "hardware"],
+      "h264_amf": ["h264", "amd", "gpu", "fast", "hardware"],
+      "hevc_amf": ["h265", "hevc", "amd", "gpu", "fast", "hardware"],
+      "libvpx": ["vp8", "webm", "web"],
+      "libvpx-vp9": ["vp9", "webm", "web", "youtube"],
+      "libaom-av1": ["av1", "modern", "efficient", "web"],
+      "prores": ["apple", "professional", "editing", "intermediate"],
+      "dnxhd": ["avid", "professional", "editing", "intermediate"],
+      "gif": ["animation", "loop", "web"]
+    },
+    "audio": {
+      "aac": ["mp4", "web", "compatible", "lossy"],
+      "libmp3lame": ["mp3", "compatible", "lossy", "web"],
+      "libopus": ["opus", "efficient", "voip", "web"],
+      "libvorbis": ["ogg", "vorbis", "web", "open"],
+      "flac": ["lossless", "archive", "quality"],
+      "pcm_s16le": ["wav", "uncompressed", "raw", "lossless"],
+      "pcm_s24le": ["wav", "uncompressed", "raw", "lossless", "24bit"],
+      "alac": ["apple", "lossless"]
+    }
+  },
+  
+  "formats": {
+    "mp4": ["video", "web", "compatible", "h264", "container"],
+    "mov": ["video", "apple", "quicktime", "prores", "container"],
+    "mkv": ["video", "matroska", "container", "flexible"],
+    "webm": ["video", "web", "vp9", "container"],
+    "avi": ["video", "legacy", "windows", "container"],
+    "gif": ["animation", "loop", "web", "image"],
+    "mp3": ["audio", "music", "compatible", "lossy"],
+    "wav": ["audio", "uncompressed", "lossless", "raw"],
+    "flac": ["audio", "lossless", "archive"],
+    "ogg": ["audio", "vorbis", "open", "web"],
+    "m4a": ["audio", "aac", "apple", "itunes"]
+  }
+}

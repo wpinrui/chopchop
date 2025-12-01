@@ -1,0 +1,35 @@
+{
+  "$schema": "./implemented.schema.json",
+  "$comment": "Lists ffmpeg capabilities that have full GUI implementation in ChopChop. Everything else is accessible via Command Crafter.",
+  
+  "filters": {
+    "video": [
+      "trim",
+      "setpts",
+      "scale",
+      "fps"
+    ],
+    "audio": [
+      "atrim",
+      "asetpts"
+    ],
+    "transition": [],
+    "effect": []
+  },
+  
+  "codecs": {
+    "video": {
+      "encoders": ["libx264"],
+      "decoders": []
+    },
+    "audio": {
+      "encoders": ["aac"],
+      "decoders": []
+    }
+  },
+  
+  "formats": {
+    "input": ["mp4", "mov", "mkv", "webm", "mp3", "wav", "png", "jpg", "jpeg"],
+    "output": ["mp4"]
+  }
+}
