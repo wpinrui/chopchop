@@ -48,15 +48,15 @@ const Timeline: React.FC = () => {
   const MAX_ZOOM = 1.0;   // 100% - frame-by-frame at 60fps (10px per frame)
   const ZOOM_FACTOR = 1.25; // Multiplicative factor for button clicks
 
-  // Calculate maximum timeline duration: max(5 min, 2 * existing media length)
+  // Calculate maximum timeline duration: max(5 min, clips end + generous padding)
   const longestClipEnd = Math.max(
-    ...tracks.map(track => {
-      const lastClip = track.clips[track.clips.length - 1];
-      return lastClip ? lastClip.timelineStart + lastClip.duration : 0;
-    }),
+    ...tracks.flatMap(track =>
+      track.clips.map(clip => clip.timelineStart + clip.duration)
+    ),
     0
   );
-  const maxDuration = Math.max(300, longestClipEnd * 2); // 5 minutes or 2x media length
+  // Always provide at least 60 seconds of empty space after the last clip, or 5 minutes minimum
+  const maxDuration = Math.max(300, longestClipEnd + 60);
 
   // At 100% zoom (zoom=1.0), 600 pixels = 1 second, so 10 pixels per frame at 60fps
   const basePixelsPerSecond = 600;
@@ -168,6 +168,91 @@ const Timeline: React.FC = () => {
     document.addEventListener('mouseup', onMouseUp);
   }, [dispatch, zoom]);
 
+  // Handle overlapping clips when placing a new clip
+  // Cuts/splits existing clips to make room for the new clip
+  const handleOverlapsOnDrop = useCallback((trackId: string, newStart: number, newEnd: number, excludeClipIds?: string[]) => {
+    const track = tracks.find(t => t.id === trackId);
+    if (!track) return;
+
+    for (const clip of track.clips) {
+      // Skip the clips being moved
+      if (excludeClipIds && excludeClipIds.includes(clip.id)) continue;
+
+      const clipStart = clip.timelineStart;
+      const clipEnd = clip.timelineStart + clip.duration;
+
+      // Check for overlap
+      if (newStart >= clipEnd || newEnd <= clipStart) {
+        // No overlap
+        continue;
+      }
+
+      // Calculate media timing ratio for adjusting mediaIn/mediaOut
+      const mediaRange = clip.mediaOut - clip.mediaIn;
+      const timeToMedia = mediaRange / clip.duration;
+
+      if (newStart <= clipStart && newEnd >= clipEnd) {
+        // New clip completely covers existing clip - delete it
+        dispatch(removeClip(clip.id));
+      } else if (newStart <= clipStart && newEnd < clipEnd) {
+        // New clip overlaps the start - trim the existing clip's start
+        const trimAmount = newEnd - clipStart;
+        const newMediaIn = clip.mediaIn + (trimAmount * timeToMedia);
+        dispatch(updateClip({
+          id: clip.id,
+          updates: {
+            timelineStart: newEnd,
+            duration: clip.duration - trimAmount,
+            mediaIn: newMediaIn,
+          }
+        }));
+      } else if (newStart > clipStart && newEnd >= clipEnd) {
+        // New clip overlaps the end - trim the existing clip's end
+        const newDuration = newStart - clipStart;
+        const newMediaOut = clip.mediaIn + (newDuration * timeToMedia);
+        dispatch(updateClip({
+          id: clip.id,
+          updates: {
+            duration: newDuration,
+            mediaOut: newMediaOut,
+          }
+        }));
+      } else if (newStart > clipStart && newEnd < clipEnd) {
+        // New clip is in the middle - split existing clip into two
+        // First part: from original start to new clip start
+        const firstDuration = newStart - clipStart;
+        const firstMediaOut = clip.mediaIn + (firstDuration * timeToMedia);
+        dispatch(updateClip({
+          id: clip.id,
+          updates: {
+            duration: firstDuration,
+            mediaOut: firstMediaOut,
+          }
+        }));
+
+        // Second part: from new clip end to original end
+        const secondStart = newEnd;
+        const secondDuration = clipEnd - newEnd;
+        const secondMediaIn = clip.mediaIn + ((newEnd - clipStart) * timeToMedia);
+        const secondClip: Clip = {
+          id: `clip-${Date.now()}-${Math.random()}-split`,
+          type: clip.type,
+          mediaId: clip.mediaId,
+          trackId: clip.trackId,
+          timelineStart: secondStart,
+          duration: secondDuration,
+          mediaIn: secondMediaIn,
+          mediaOut: clip.mediaOut,
+          name: clip.name,
+          enabled: clip.enabled,
+          effects: [...clip.effects],
+          linkId: clip.linkId,
+        };
+        dispatch(addClip(secondClip));
+      }
+    }
+  }, [tracks, dispatch]);
+
   // Handle drop from SourcePreview
   const handleTrackDrop = useCallback((e: React.DragEvent, trackId: string) => {
     e.preventDefault();
@@ -208,18 +293,24 @@ const Timeline: React.FC = () => {
       // Generate linkId if dropping both video and audio
       const linkId = type === 'both' ? `link-${Date.now()}-${Math.random()}` : undefined;
 
+      const clipStart = Math.max(0, dropTime);
+      const clipEnd = clipStart + clipDuration;
+
       // Create clip(s) based on type
       // 'video' = video only, 'audio' = audio only, 'both' = linked video+audio
       if (type === 'video' || type === 'both') {
         // Find video track (or use current if it's a video track)
         const videoTrack = track.type === 'video' ? track : tracks.find(t => t.type === 'video');
         if (videoTrack) {
+          // Handle overlaps before adding the new clip
+          handleOverlapsOnDrop(videoTrack.id, clipStart, clipEnd, []);
+
           const videoClip: Clip = {
             id: `clip-${Date.now()}-${Math.random()}`,
             type: 'video',
             mediaId: mediaItem.id,
             trackId: videoTrack.id,
-            timelineStart: Math.max(0, dropTime),
+            timelineStart: clipStart,
             duration: clipDuration,
             mediaIn: inPoint,
             mediaOut: outPoint,
@@ -236,13 +327,16 @@ const Timeline: React.FC = () => {
         // Find audio track (or use current if it's an audio track)
         const audioTrack = track.type === 'audio' ? track : tracks.find(t => t.type === 'audio');
         if (audioTrack && mediaItem.type !== 'image') {
+          // Handle overlaps before adding the new clip
+          handleOverlapsOnDrop(audioTrack.id, clipStart, clipEnd, []);
+
           // Images don't have audio
           const audioClip: Clip = {
             id: `clip-${Date.now()}-${Math.random()}-audio`,
             type: 'audio',
             mediaId: mediaItem.id,
             trackId: audioTrack.id,
-            timelineStart: Math.max(0, dropTime),
+            timelineStart: clipStart,
             duration: clipDuration,
             mediaIn: inPoint,
             mediaOut: outPoint,
@@ -257,7 +351,7 @@ const Timeline: React.FC = () => {
     } catch (error) {
       console.error('Error dropping media on timeline:', error);
     }
-  }, [dispatch, pixelsToTime, scrollLeft, media, tracks]);
+  }, [dispatch, pixelsToTime, scrollLeft, media, tracks, handleOverlapsOnDrop]);
 
   const handleTrackDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -434,14 +528,19 @@ const Timeline: React.FC = () => {
     }
 
     // Get initial positions for all clips to be moved
-    const initialPositions: { id: string; start: number }[] = [];
+    const initialPositions: { id: string; trackId: string; start: number; duration: number }[] = [];
     for (const track of tracks) {
       for (const c of track.clips) {
         if (allClipIds.has(c.id)) {
-          initialPositions.push({ id: c.id, start: c.timelineStart });
+          initialPositions.push({ id: c.id, trackId: track.id, start: c.timelineStart, duration: c.duration });
         }
       }
     }
+
+    // Track the list of all clip IDs being moved
+    const movedClipIds = Array.from(allClipIds);
+    // Track the final applied delta (updated during drag)
+    let finalDelta = 0;
 
     setDraggingClip({ id: clip.id, initialStart: clip.timelineStart, mouseOffset });
 
@@ -457,11 +556,11 @@ const Timeline: React.FC = () => {
       newStartTime = findSnapPoint(newStartTime, clip.duration, clip.id);
 
       // Calculate the delta from original position
-      const delta = newStartTime - clip.timelineStart;
+      finalDelta = newStartTime - clip.timelineStart;
 
       // Move all selected/linked clips by the same delta
       for (const pos of initialPositions) {
-        const newStart = Math.max(0, pos.start + delta);
+        const newStart = Math.max(0, pos.start + finalDelta);
         dispatch(updateClip({ id: pos.id, updates: { timelineStart: newStart } }));
       }
     };
@@ -471,11 +570,21 @@ const Timeline: React.FC = () => {
       setDraggingClip(null);
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
+
+      // Handle overlaps for each moved clip on its track
+      // Only process if there was actual movement
+      if (finalDelta !== 0) {
+        for (const pos of initialPositions) {
+          const newStart = Math.max(0, pos.start + finalDelta);
+          const newEnd = newStart + pos.duration;
+          handleOverlapsOnDrop(pos.trackId, newStart, newEnd, movedClipIds);
+        }
+      }
     };
 
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
-  }, [dispatch, timeToPixels, pixelsToTime, findSnapPoint, getLinkedClips, selectedClipIds, tracks]);
+  }, [dispatch, timeToPixels, pixelsToTime, findSnapPoint, getLinkedClips, selectedClipIds, tracks, handleOverlapsOnDrop]);
 
   // Format time as MM:SS:FF (or just frames for sub-second markers)
   const formatTime = (seconds: number, forRuler = false): string => {

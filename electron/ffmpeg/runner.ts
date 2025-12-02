@@ -299,3 +299,29 @@ export async function getFFmpegVersion(): Promise<string | null> {
     return null;
   }
 }
+
+/**
+ * Check if NVENC (NVIDIA GPU encoding) is available
+ * This tests by trying to initialize h264_nvenc encoder briefly
+ */
+export async function checkNvencAvailable(): Promise<boolean> {
+  try {
+    // Try to list encoders and check for nvenc
+    const result = await runFFmpeg(['-hide_banner', '-encoders']);
+    if (result.success && result.stdout.includes('h264_nvenc')) {
+      // Encoder exists, but we also need to test if CUDA is available
+      // by doing a quick encode test
+      const testResult = await runFFmpeg([
+        '-f', 'lavfi',
+        '-i', 'nullsrc=s=16x16:d=0.01',
+        '-c:v', 'h264_nvenc',
+        '-f', 'null',
+        '-'
+      ]);
+      return testResult.success;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}

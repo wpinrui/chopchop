@@ -7,7 +7,8 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import path from 'node:path';
 import { probeMediaFile, getMediaDuration, generateThumbnail, getMediaType, generateWaveformData } from './ffmpeg/probe';
-import { checkFFmpegAvailable, getFFmpegVersion } from './ffmpeg/runner';
+import { checkFFmpegAvailable, getFFmpegVersion, checkNvencAvailable } from './ffmpeg/runner';
+import { exportTimeline, cancelExport, type ExportProgress } from './ffmpeg/exporter';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 
@@ -112,6 +113,10 @@ function registerIPCHandlers() {
     return await getFFmpegVersion();
   });
 
+  ipcMain.handle('ffmpeg:checkNvenc', async () => {
+    return await checkNvencAvailable();
+  });
+
   // Media import
   ipcMain.handle('media:showImportDialog', async () => {
     const result = await dialog.showOpenDialog(mainWindow!, {
@@ -204,6 +209,53 @@ function registerIPCHandlers() {
   ipcMain.handle('file:showSaveDialog', async (_event, options: any) => {
     const result = await dialog.showSaveDialog(mainWindow!, options);
     return result.filePath;
+  });
+
+  // Project file operations
+  ipcMain.handle('project:showOpenDialog', async () => {
+    const result = await dialog.showOpenDialog(mainWindow!, {
+      properties: ['openFile'],
+      filters: [
+        { name: 'ChopChop Project', extensions: ['chpchp'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+
+    return result.filePaths[0];
+  });
+
+  ipcMain.handle('project:showSaveDialog', async (_event, defaultName: string) => {
+    const result = await dialog.showSaveDialog(mainWindow!, {
+      defaultPath: defaultName,
+      filters: [
+        { name: 'ChopChop Project', extensions: ['chpchp'] },
+      ],
+    });
+
+    return result.filePath || null;
+  });
+
+  // Export operations
+  ipcMain.handle('export:start', async (
+    _event,
+    timeline: any,
+    media: any[],
+    settings: any
+  ) => {
+    const onProgress = (progress: ExportProgress) => {
+      // Send progress to renderer
+      mainWindow?.webContents.send('export:progress', progress);
+    };
+
+    return await exportTimeline(timeline, media, settings, onProgress);
+  });
+
+  ipcMain.handle('export:cancel', async () => {
+    await cancelExport();
   });
 }
 

@@ -8,14 +8,34 @@ import type { RootState } from './store';
 import MediaBin, { type MediaBinHandle } from './components/MediaBin/MediaBin';
 import Timeline from './components/Timeline/Timeline';
 import SourcePreview from './components/SourcePreview/SourcePreview';
-import { addTrack } from './store/timelineSlice';
+import ExportDialog from './components/ExportDialog/ExportDialog';
+import { addTrack, loadTimeline } from './store/timelineSlice';
 import { setActivePane } from './store/uiSlice';
+import { loadProject, setProjectPath, markClean, updateMediaItem } from './store/projectSlice';
+import type { Project, Timeline as TimelineType, MediaItem } from '@types';
 import './App.css';
+
+// Project file format interface
+interface ProjectFile {
+  version: string;
+  name: string;
+  settings: Project['settings'];
+  media: Array<Omit<MediaItem, 'thumbnailPath' | 'waveformData'> & {
+    thumbnailPath?: string | null;
+    waveformData?: number[] | null;
+  }>;
+  timeline: TimelineType;
+}
 
 const App: React.FC = () => {
   const dispatch = useDispatch();
-  const projectName = useSelector((state: RootState) => state.project.name);
-  const tracks = useSelector((state: RootState) => state.timeline.tracks);
+  const project = useSelector((state: RootState) => state.project);
+  const timeline = useSelector((state: RootState) => state.timeline);
+  const projectName = project.name;
+  const projectPath = project.path;
+  const projectDirty = project.dirty;
+  const projectMedia = project.media;
+  const tracks = timeline.tracks;
   const activePane = useSelector((state: RootState) => state.ui.activePane);
   const mediaBinRef = useRef<MediaBinHandle>(null);
   const tracksInitialized = useRef(false);
@@ -29,6 +49,149 @@ const App: React.FC = () => {
   const [topLeftTab, setTopLeftTab] = useState<'source' | 'effects'>('source');
   const [bottomLeftTab, setBottomLeftTab] = useState<'media' | 'effects-browser' | 'markers' | 'history'>('media');
 
+  // Export dialog state
+  const [showExportDialog, setShowExportDialog] = useState(false);
+
+  // Status message
+  const [statusMessage, setStatusMessage] = useState('Ready');
+
+  // Save project to file
+  const saveProjectToFile = useCallback(async (filePath: string) => {
+    try {
+      setStatusMessage('Saving...');
+
+      // Build project file data (exclude thumbnails and waveforms - they'll be regenerated)
+      const projectFile: ProjectFile = {
+        version: project.version,
+        name: project.name,
+        settings: project.settings,
+        media: projectMedia.map(m => ({
+          id: m.id,
+          name: m.name,
+          path: m.path,
+          proxyPath: m.proxyPath,
+          type: m.type,
+          duration: m.duration,
+          metadata: m.metadata,
+          thumbnailPath: null, // Will be regenerated on load
+          waveformData: null,  // Will be regenerated on load
+        })),
+        timeline: timeline,
+      };
+
+      const content = JSON.stringify(projectFile, null, 2);
+      await window.electronAPI.file.writeText(filePath, content);
+
+      dispatch(setProjectPath(filePath));
+      dispatch(markClean());
+      setStatusMessage('Project saved');
+
+      // Reset status after 2 seconds
+      setTimeout(() => setStatusMessage('Ready'), 2000);
+    } catch (error) {
+      console.error('Failed to save project:', error);
+      setStatusMessage('Failed to save project');
+    }
+  }, [dispatch, project, projectMedia, timeline]);
+
+  // Save project (Ctrl+S)
+  const handleSave = useCallback(async () => {
+    if (projectPath) {
+      // Save to existing path
+      await saveProjectToFile(projectPath);
+    } else {
+      // No path yet, show Save As dialog
+      const filePath = await window.electronAPI.project.showSaveDialog(projectName + '.chpchp');
+      if (filePath) {
+        await saveProjectToFile(filePath);
+      }
+    }
+  }, [projectPath, projectName, saveProjectToFile]);
+
+  // Save As (Ctrl+Shift+S)
+  const handleSaveAs = useCallback(async () => {
+    const filePath = await window.electronAPI.project.showSaveDialog(projectName + '.chpchp');
+    if (filePath) {
+      await saveProjectToFile(filePath);
+    }
+  }, [projectName, saveProjectToFile]);
+
+  // Open project (Ctrl+O)
+  const handleOpen = useCallback(async () => {
+    try {
+      const filePath = await window.electronAPI.project.showOpenDialog();
+      if (!filePath) return;
+
+      setStatusMessage('Loading project...');
+
+      const content = await window.electronAPI.file.readText(filePath);
+      const projectFile: ProjectFile = JSON.parse(content);
+
+      // Load the timeline first
+      dispatch(loadTimeline(projectFile.timeline));
+
+      // Build media items with null thumbnails/waveforms (will regenerate)
+      const mediaItems: MediaItem[] = projectFile.media.map(m => ({
+        ...m,
+        thumbnailPath: null,
+        waveformData: null,
+      }));
+
+      // Load project state
+      dispatch(loadProject({
+        version: projectFile.version,
+        name: projectFile.name,
+        path: filePath,
+        dirty: false,
+        settings: projectFile.settings,
+        media: mediaItems,
+      }));
+
+      tracksInitialized.current = true; // Don't re-add default tracks
+
+      setStatusMessage('Regenerating thumbnails...');
+
+      // Regenerate thumbnails and waveforms asynchronously
+      for (const mediaItem of mediaItems) {
+        try {
+          // Regenerate thumbnail
+          const probeResult = await window.electronAPI.media.probe(mediaItem.path);
+          if (probeResult?.thumbnailDataUrl) {
+            dispatch(updateMediaItem({
+              id: mediaItem.id,
+              updates: { thumbnailPath: probeResult.thumbnailDataUrl },
+            }));
+          }
+
+          // Regenerate waveform for audio/video
+          if (mediaItem.type !== 'image') {
+            const waveformData = await window.electronAPI.media.generateWaveform(mediaItem.path);
+            if (waveformData) {
+              dispatch(updateMediaItem({
+                id: mediaItem.id,
+                updates: { waveformData },
+              }));
+            }
+          }
+        } catch (err) {
+          console.warn(`Failed to regenerate data for ${mediaItem.name}:`, err);
+        }
+      }
+
+      dispatch(markClean()); // Mark clean after regeneration
+      setStatusMessage('Project loaded');
+      setTimeout(() => setStatusMessage('Ready'), 2000);
+    } catch (error) {
+      console.error('Failed to open project:', error);
+      setStatusMessage('Failed to open project');
+    }
+  }, [dispatch]);
+
+  // Export (Ctrl+M)
+  const handleExport = useCallback(() => {
+    setShowExportDialog(true);
+  }, []);
+
   // Initialize default tracks
   useEffect(() => {
     if (!tracksInitialized.current && tracks.length === 0) {
@@ -41,7 +204,8 @@ const App: React.FC = () => {
         clips: [],
         locked: false,
         muted: false,
-        solo: false,
+        visible: true,
+        volume: 1,
       }));
       dispatch(addTrack({
         id: 'audio-1',
@@ -50,7 +214,8 @@ const App: React.FC = () => {
         clips: [],
         locked: false,
         muted: false,
-        solo: false,
+        visible: true,
+        volume: 1,
       }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -59,17 +224,45 @@ const App: React.FC = () => {
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Skip if typing in an input
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      const ctrl = e.ctrlKey || e.metaKey;
+
       // Ctrl+I - Import Media
-      if ((e.ctrlKey || e.metaKey) && e.key === 'i') {
+      if (ctrl && e.key === 'i') {
         e.preventDefault();
-        // Trigger import via MediaBin component
         mediaBinRef.current?.triggerImport();
+      }
+
+      // Ctrl+S - Save Project
+      if (ctrl && !e.shiftKey && e.key === 's') {
+        e.preventDefault();
+        handleSave();
+      }
+
+      // Ctrl+Shift+S - Save As
+      if (ctrl && e.shiftKey && e.key === 'S') {
+        e.preventDefault();
+        handleSaveAs();
+      }
+
+      // Ctrl+O - Open Project
+      if (ctrl && e.key === 'o') {
+        e.preventDefault();
+        handleOpen();
+      }
+
+      // Ctrl+M - Export (Make)
+      if (ctrl && e.key === 'm') {
+        e.preventDefault();
+        handleExport();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [handleSave, handleSaveAs, handleOpen, handleExport]);
 
   // Horizontal resizer (between top and bottom rows)
   const handleHorizontalResize = useCallback((e: React.MouseEvent) => {
@@ -149,10 +342,11 @@ const App: React.FC = () => {
     document.addEventListener('mouseup', onMouseUp);
   }, [bottomLeftWidth]);
 
-  // Update window title with project name
+  // Update window title with project name and dirty indicator
   useEffect(() => {
-    document.title = `ChopChop - ${projectName}`;
-  }, [projectName]);
+    const dirtyIndicator = projectDirty ? ' *' : '';
+    document.title = `ChopChop - ${projectName}${dirtyIndicator}`;
+  }, [projectName, projectDirty]);
 
   // Pane activation handlers
   const handleProgramClick = useCallback(() => {
@@ -286,9 +480,16 @@ const App: React.FC = () => {
 
       <div className="app-footer">
         <div className="status-bar">
-          Ready
+          <span className="status-message">{statusMessage}</span>
+          {projectDirty && <span className="status-dirty">Modified</span>}
+          {projectPath && <span className="status-path">{projectPath}</span>}
         </div>
       </div>
+
+      <ExportDialog
+        isOpen={showExportDialog}
+        onClose={() => setShowExportDialog(false)}
+      />
     </div>
   );
 };

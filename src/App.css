@@ -199,4 +199,23 @@
   padding: 0 var(--spacing-sm);
   font-size: 11px;
   color: var(--text-secondary);
+  gap: var(--spacing-md);
+}
+
+.status-message {
+  color: var(--text-secondary);
+}
+
+.status-dirty {
+  color: var(--accent-orange, #e69e4c);
+  font-weight: 500;
+}
+
+.status-path {
+  color: var(--text-disabled);
+  margin-left: auto;
+  max-width: 400px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

@@ -19,6 +19,7 @@ const electronAPI = {
   ffmpeg: {
     check: () => ipcRenderer.invoke('ffmpeg:check'),
     getVersion: () => ipcRenderer.invoke('ffmpeg:getVersion'),
+    checkNvenc: () => ipcRenderer.invoke('ffmpeg:checkNvenc'),
   },
 
   // Media operations
@@ -35,6 +36,26 @@ const electronAPI = {
       ipcRenderer.invoke('file:writeText', filePath, content),
     showSaveDialog: (options: any) =>
       ipcRenderer.invoke('file:showSaveDialog', options),
+  },
+
+  // Project operations
+  project: {
+    showOpenDialog: () => ipcRenderer.invoke('project:showOpenDialog'),
+    showSaveDialog: (defaultName: string) =>
+      ipcRenderer.invoke('project:showSaveDialog', defaultName),
+  },
+
+  // Export operations
+  export: {
+    start: (settings: any) =>
+      ipcRenderer.invoke('export:start', settings.timeline, settings.media, settings.exportSettings),
+    cancel: () => ipcRenderer.invoke('export:cancel'),
+    onProgress: (callback: (progress: any) => void) => {
+      const handler = (_event: any, progress: any) => callback(progress);
+      ipcRenderer.on('export:progress', handler);
+      // Return cleanup function
+      return () => ipcRenderer.removeListener('export:progress', handler);
+    },
   },
 };
 
