@@ -37,6 +37,9 @@ const PREVIEW_QUALITY_OPTIONS = [
   { value: 0.125, label: '1/8' },
 ];
 
+// Playback speeds for J/L shuttle control
+const PLAYBACK_SPEEDS = [0.5, 1, 2, 4];
+
 // Display mode: video for playback, canvas for pause/scrub
 type DisplayMode = 'video' | 'canvas';
 
@@ -84,6 +87,8 @@ const ProgramMonitor: React.FC = () => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [displayMode, setDisplayMode] = useState<DisplayMode>('canvas');
+  const [playbackSpeed, setPlaybackSpeed] = useState(1); // Current speed magnitude
+  const [playbackDirection, setPlaybackDirection] = useState<-1 | 0 | 1>(0); // -1 = backward, 0 = paused, 1 = forward
 
   // Hybrid preview system
   const [previewState, previewActions] = useHybridPreview();
@@ -183,7 +188,7 @@ const ProgramMonitor: React.FC = () => {
   }, [playheadPosition, isPlaying, isScrubbing, previewState.isInitialized, extractAndRenderFrame]);
 
   // Play handler
-  const handlePlay = useCallback(() => {
+  const handlePlay = useCallback((speed: number = 1) => {
     if (!previewReady) {
       setShowLoadingDialog(true);
       return;
@@ -194,8 +199,11 @@ const ProgramMonitor: React.FC = () => {
 
     setIsPlaying(true);
     setDisplayMode('video');
+    setPlaybackDirection(1);
+    setPlaybackSpeed(speed);
     dispatch(setPlayingPane('program'));
 
+    video.playbackRate = speed;
     video.currentTime = playheadPosition;
     video.play();
   }, [previewReady, playheadPosition, dispatch]);
@@ -209,14 +217,19 @@ const ProgramMonitor: React.FC = () => {
 
     setIsPlaying(false);
     setDisplayMode('canvas');
+    setPlaybackDirection(0);
     dispatch(setPlayingPane(null));
 
     // Extract frame at pause position for full quality display
-    const currentTime = video?.currentTime ?? playheadPosition;
+    // When coming from reverse playback, use playheadPosition (video.currentTime is stale)
+    // When coming from forward playback, use video.currentTime (more accurate)
+    const currentTime = playbackDirection === -1
+      ? playheadPosition
+      : (video?.currentTime ?? playheadPosition);
     dispatch(setPlayheadPosition(currentTime));
     lastExtractedTimeRef.current = currentTime;
     await extractAndRenderFrame(currentTime);
-  }, [dispatch, playheadPosition, extractAndRenderFrame]);
+  }, [dispatch, playheadPosition, extractAndRenderFrame, playbackDirection]);
 
   // Toggle play/pause
   const handlePlayPause = useCallback(() => {
@@ -235,6 +248,7 @@ const ProgramMonitor: React.FC = () => {
       if (video) video.pause();
       setIsPlaying(false);
       setDisplayMode('canvas');
+      setPlaybackDirection(0);
       dispatch(setPlayingPane(null));
     }
 
@@ -403,6 +417,66 @@ const ProgramMonitor: React.FC = () => {
     };
   }, [isPlaying, timelineDuration, dispatch, extractAndRenderFrame]);
 
+  // Handle reverse playback using requestAnimationFrame (HTML5 video doesn't support negative playbackRate)
+  // Use refs to avoid effect restarting when callbacks change
+  const reverseTimeRef = useRef(playheadPosition);
+  const extractFrameRef = useRef(extractAndRenderFrame);
+
+  useEffect(() => {
+    reverseTimeRef.current = playheadPosition;
+  }, [playheadPosition]);
+
+  useEffect(() => {
+    extractFrameRef.current = extractAndRenderFrame;
+  }, [extractAndRenderFrame]);
+
+  useEffect(() => {
+    if (playbackDirection !== -1) return;
+
+    let animationId: number;
+    let lastTime = performance.now();
+    let cancelled = false;
+
+    const updateReverse = async (now: number) => {
+      if (cancelled) return;
+
+      const delta = (now - lastTime) / 1000;
+      lastTime = now;
+
+      const newTime = reverseTimeRef.current - delta * playbackSpeed;
+
+      if (newTime <= 0) {
+        reverseTimeRef.current = 0;
+        dispatch(setPlayheadPosition(0));
+        lastExtractedTimeRef.current = 0;
+        setPlaybackDirection(0);
+        setIsPlaying(false);
+        setDisplayMode('canvas');
+        dispatch(setPlayingPane(null));
+        await extractFrameRef.current(0);
+        return;
+      }
+
+      reverseTimeRef.current = newTime;
+      dispatch(setPlayheadPosition(newTime));
+      lastExtractedTimeRef.current = newTime;
+      await extractFrameRef.current(newTime);
+
+      if (!cancelled) {
+        animationId = requestAnimationFrame(updateReverse);
+      }
+    };
+
+    animationId = requestAnimationFrame(updateReverse);
+
+    return () => {
+      cancelled = true;
+      if (animationId) {
+        cancelAnimationFrame(animationId);
+      }
+    };
+  }, [playbackDirection, playbackSpeed, dispatch]);
+
   // Keyboard shortcuts
   useEffect(() => {
     if (!shouldHandleKeyboard) return;
@@ -411,26 +485,80 @@ const ProgramMonitor: React.FC = () => {
       // Don't handle if typing in an input
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
+      const video = videoRef.current;
+
       switch (e.key.toLowerCase()) {
         case 'k':
         case ' ':
           e.preventDefault();
-          handlePlayPause();
+          if (playbackDirection === 0) {
+            handlePlay(1);
+          } else {
+            handlePause();
+          }
           break;
 
         case 'j':
           e.preventDefault();
-          // TODO: JKL shuttle - for now just step back
-          handleFrameStep(-1);
+          if (playbackDirection === 1) {
+            // Was playing forward, switch to backward at first speed
+            if (video) video.pause();
+            setPlaybackSpeed(PLAYBACK_SPEEDS[0]);
+            setPlaybackDirection(-1);
+            setDisplayMode('canvas');
+            setIsPlaying(true);
+            dispatch(setPlayingPane('program'));
+          } else if (playbackDirection === -1) {
+            // Already playing backward, increase speed
+            const currentIndex = PLAYBACK_SPEEDS.indexOf(playbackSpeed);
+            const nextIndex = Math.min(currentIndex + 1, PLAYBACK_SPEEDS.length - 1);
+            setPlaybackSpeed(PLAYBACK_SPEEDS[nextIndex]);
+          } else {
+            // Was paused, start backward at first speed
+            setPlaybackSpeed(PLAYBACK_SPEEDS[0]);
+            setPlaybackDirection(-1);
+            setDisplayMode('canvas');
+            setIsPlaying(true);
+            dispatch(setPlayingPane('program'));
+          }
           break;
 
         case 'l':
           e.preventDefault();
-          // TODO: JKL shuttle - for now just step forward or play
-          if (!isPlaying) {
-            handlePlay();
+          if (playbackDirection === -1) {
+            // Was playing backward, switch to forward at first speed
+            setPlaybackDirection(1);
+            setPlaybackSpeed(PLAYBACK_SPEEDS[0]);
+            setDisplayMode('video');
+            if (video) {
+              video.playbackRate = PLAYBACK_SPEEDS[0];
+              video.currentTime = playheadPosition;
+              video.play();
+            }
+          } else if (playbackDirection === 1) {
+            // Already playing forward, increase speed
+            const currentIndex = PLAYBACK_SPEEDS.indexOf(playbackSpeed);
+            const nextIndex = Math.min(currentIndex + 1, PLAYBACK_SPEEDS.length - 1);
+            setPlaybackSpeed(PLAYBACK_SPEEDS[nextIndex]);
+            if (video) {
+              video.playbackRate = PLAYBACK_SPEEDS[nextIndex];
+            }
           } else {
-            // Already playing, could increase speed here
+            // Was paused, start forward at first speed
+            if (!previewReady) {
+              setShowLoadingDialog(true);
+              return;
+            }
+            setPlaybackSpeed(PLAYBACK_SPEEDS[0]);
+            setPlaybackDirection(1);
+            setDisplayMode('video');
+            setIsPlaying(true);
+            dispatch(setPlayingPane('program'));
+            if (video) {
+              video.playbackRate = PLAYBACK_SPEEDS[0];
+              video.currentTime = playheadPosition;
+              video.play();
+            }
           }
           break;
 
@@ -468,7 +596,7 @@ const ProgramMonitor: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [shouldHandleKeyboard, handlePlayPause, handleFrameStep, handleGoToStart, handleGoToEnd, handlePlay, isPlaying, isMuted]);
+  }, [shouldHandleKeyboard, handlePlayPause, handleFrameStep, handleGoToStart, handleGoToEnd, handlePlay, handlePause, isPlaying, isMuted, playbackDirection, playbackSpeed, playheadPosition, previewReady, dispatch]);
 
   // Set active pane when clicked
   const handlePaneClick = useCallback(() => {
