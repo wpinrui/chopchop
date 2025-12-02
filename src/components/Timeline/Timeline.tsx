@@ -11,6 +11,7 @@ import type { RootState } from '../../store';
 import { setPlayheadPosition, addClip, updateClip, unlinkClips, linkClips } from '../../store/timelineSlice';
 import { selectClip, addToSelection, removeFromSelection, clearSelection } from '../../store/uiSlice';
 import type { Clip } from '@types';
+import WaveformCanvas from './WaveformCanvas';
 import './Timeline.css';
 
 const Timeline: React.FC = () => {
@@ -30,6 +31,14 @@ const Timeline: React.FC = () => {
   const [viewportWidth, setViewportWidth] = useState(0);
   const [draggingClip, setDraggingClip] = useState<{ id: string; initialStart: number; mouseOffset: number } | null>(null);
   const [snapEnabled, setSnapEnabled] = useState(true);
+
+  // Drag preview state for showing ghost clips during drag from source
+  const [dragPreview, setDragPreview] = useState<{
+    mediaId: string;
+    type: 'video' | 'audio' | 'both';
+    duration: number;
+    xPosition: number;
+  } | null>(null);
 
   // Snap threshold in pixels
   const SNAP_THRESHOLD_PX = 10;
@@ -163,6 +172,7 @@ const Timeline: React.FC = () => {
   const handleTrackDrop = useCallback((e: React.DragEvent, trackId: string) => {
     e.preventDefault();
     e.stopPropagation();
+    setDragPreview(null); // Clear preview on drop
 
     const sourceData = e.dataTransfer.getData('application/chopchop-source');
     if (!sourceData) return;
@@ -253,6 +263,38 @@ const Timeline: React.FC = () => {
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect = 'copy';
+
+    // Read from global drag source (dataTransfer.getData is blocked during dragOver for security)
+    const dragSource = (window as any).__chopchopDragSource as {
+      mediaId: string;
+      type: 'video' | 'audio' | 'both';
+      inPoint: number;
+      outPoint: number;
+    } | null;
+
+    if (dragSource && timelineRef.current) {
+      const rect = timelineRef.current.getBoundingClientRect();
+      const xPosition = e.clientX - rect.left;
+      const duration = dragSource.outPoint - dragSource.inPoint;
+
+      setDragPreview({
+        mediaId: dragSource.mediaId,
+        type: dragSource.type,
+        duration,
+        xPosition,
+      });
+    }
+  }, []);
+
+  const handleTrackDragLeave = useCallback((e: React.DragEvent) => {
+    // Only clear if leaving the timeline area entirely
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setDragPreview(null);
+    }
+  }, []);
+
+  const handleTimelineDragEnd = useCallback(() => {
+    setDragPreview(null);
   }, []);
 
   // Get all clips linked to a given clip (including the clip itself)
@@ -658,14 +700,45 @@ const Timeline: React.FC = () => {
               </div>
 
           {/* Tracks */}
-          <div className="timeline-tracks">
-            {tracks.map(track => (
+          <div
+            className="timeline-tracks"
+            onDragLeave={handleTrackDragLeave}
+            onDragEnd={handleTimelineDragEnd}
+          >
+            {tracks.map(track => {
+              // Determine if this track should show a ghost clip
+              const showGhost = dragPreview && (
+                (track.type === 'video' && (dragPreview.type === 'video' || dragPreview.type === 'both')) ||
+                (track.type === 'audio' && (dragPreview.type === 'audio' || dragPreview.type === 'both'))
+              );
+              const ghostLeft = dragPreview ? dragPreview.xPosition : 0;
+              const ghostWidth = dragPreview ? timeToPixels(dragPreview.duration) : 0;
+              const ghostMedia = dragPreview ? media.find(m => m.id === dragPreview.mediaId) : null;
+
+              return (
               <div
                 key={track.id}
                 className="track"
                 onDragOver={handleTrackDragOver}
                 onDrop={(e) => handleTrackDrop(e, track.id)}
               >
+                {/* Ghost clip preview during drag */}
+                {showGhost && (
+                  <div
+                    className={`clip ghost-clip ${track.type === 'video' ? 'video-clip' : 'audio-clip'}`}
+                    style={{
+                      left: `${ghostLeft}px`,
+                      width: `${ghostWidth}px`,
+                    }}
+                  >
+                    <div className="clip-content">
+                      <div className="clip-info">
+                        <span className="clip-name">{ghostMedia?.name || 'Clip'}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Render clips */}
                 {track.clips.map(clip => {
                   const left = timeToPixels(clip.timelineStart);
@@ -695,7 +768,7 @@ const Timeline: React.FC = () => {
                           <span className="clip-name">{clip.name}</span>
                         </div>
 
-                        {/* Video thumbnail */}
+                        {/* Video clips: thumbnail fills the clip */}
                         {isVideoClip && (
                           <div className="clip-thumbnail">
                             {clipMedia?.thumbnailPath ? (
@@ -706,16 +779,30 @@ const Timeline: React.FC = () => {
                           </div>
                         )}
 
-                        {/* Waveform area (for both video and audio clips) */}
-                        <div className="clip-waveform">
-                          <div className="clip-waveform-placeholder" />
-                        </div>
+                        {/* Audio clips: waveform visualization */}
+                        {isAudioClip && (
+                          <div className="clip-waveform">
+                            {clipMedia?.waveformData ? (
+                              <WaveformCanvas
+                                waveformData={clipMedia.waveformData}
+                                mediaDuration={clipMedia.duration}
+                                mediaIn={clip.mediaIn}
+                                mediaOut={clip.mediaOut}
+                                width={width}
+                                height={52}
+                              />
+                            ) : (
+                              <div className="clip-waveform-placeholder" />
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
                 })}
               </div>
-            ))}
+              );
+            })}
           </div>
 
             {/* Playhead */}

@@ -49,6 +49,7 @@ export interface MediaItem {
   duration: number; // seconds
   metadata: MediaMetadata;
   thumbnailPath: string | null;
+  waveformData: number[] | null; // Normalized peak values (0-1) for audio waveform display
 }
 
 export type MediaType = 'video' | 'audio' | 'image';

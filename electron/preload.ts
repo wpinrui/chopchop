@@ -25,6 +25,7 @@ const electronAPI = {
   media: {
     showImportDialog: () => ipcRenderer.invoke('media:showImportDialog'),
     probe: (filePath: string) => ipcRenderer.invoke('media:probe', filePath),
+    generateWaveform: (filePath: string) => ipcRenderer.invoke('media:generateWaveform', filePath),
   },
 
   // File operations

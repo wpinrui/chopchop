@@ -7,7 +7,7 @@
 import React, { useCallback, useState, useImperativeHandle, forwardRef } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import type { RootState } from '../../store';
-import { addMediaItem } from '../../store/projectSlice';
+import { addMediaItem, updateMediaItem } from '../../store/projectSlice';
 import { setSourceMediaId } from '../../store/uiSlice';
 import type { MediaItem } from '@types';
 import './MediaBin.css';
@@ -46,8 +46,9 @@ const MediaBin = forwardRef<MediaBinHandle>((props, ref) => {
 
         const fileName = filePath.split(/[\\/]/).pop() || 'Unknown';
 
+        const mediaId = `media-${Date.now()}-${Math.random()}`;
         const mediaItem: MediaItem = {
-          id: `media-${Date.now()}-${Math.random()}`,
+          id: mediaId,
           name: fileName,
           path: filePath,
           proxyPath: null,
@@ -55,9 +56,21 @@ const MediaBin = forwardRef<MediaBinHandle>((props, ref) => {
           duration: probeResult.duration,
           metadata: probeResult.metadata,
           thumbnailPath: probeResult.thumbnailDataUrl,
+          waveformData: null, // Will be loaded async
         };
 
         dispatch(addMediaItem(mediaItem));
+
+        // Generate waveform async for audio/video files
+        if (probeResult.type !== 'image') {
+          window.electronAPI.media.generateWaveform(filePath).then((waveformData) => {
+            if (waveformData) {
+              dispatch(updateMediaItem({ id: mediaId, updates: { waveformData } }));
+            }
+          }).catch((err) => {
+            console.error('Failed to generate waveform:', err);
+          });
+        }
       } catch (error) {
         console.error('Error importing media:', error);
       }
@@ -130,9 +143,10 @@ const MediaBin = forwardRef<MediaBinHandle>((props, ref) => {
         }
 
         const fileName = file.name;
+        const mediaId = `media-${Date.now()}-${Math.random()}`;
 
         const mediaItem: MediaItem = {
-          id: `media-${Date.now()}-${Math.random()}`,
+          id: mediaId,
           name: fileName,
           path: filePath,
           proxyPath: null,
@@ -140,9 +154,21 @@ const MediaBin = forwardRef<MediaBinHandle>((props, ref) => {
           duration: probeResult.duration,
           metadata: probeResult.metadata,
           thumbnailPath: probeResult.thumbnailDataUrl,
+          waveformData: null, // Will be loaded async
         };
 
         dispatch(addMediaItem(mediaItem));
+
+        // Generate waveform async for audio/video files
+        if (probeResult.type !== 'image') {
+          window.electronAPI.media.generateWaveform(filePath).then((waveformData) => {
+            if (waveformData) {
+              dispatch(updateMediaItem({ id: mediaId, updates: { waveformData } }));
+            }
+          }).catch((err) => {
+            console.error('Failed to generate waveform:', err);
+          });
+        }
       } catch (error) {
         console.error('Error importing dropped media:', error);
       }

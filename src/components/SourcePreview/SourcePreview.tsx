@@ -410,9 +410,23 @@ const SourcePreview: React.FC = () => {
       outPoint: sourceOutPoint ?? sourceMedia.duration,
     };
 
+    // Store in both dataTransfer (for drop) and global (for dragOver preview)
     e.dataTransfer.setData('application/chopchop-source', JSON.stringify(dragData));
     e.dataTransfer.effectAllowed = 'copy';
+
+    // Hide the default browser drag ghost - use a transparent 1x1 image
+    const emptyImg = document.createElement('img');
+    emptyImg.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+    e.dataTransfer.setDragImage(emptyImg, 0, 0);
+
+    // Store globally for Timeline preview during dragOver (browsers block getData during dragOver)
+    (window as any).__chopchopDragSource = dragData;
   }, [sourceMedia, sourceInPoint, sourceOutPoint]);
+
+  // Clear global drag data on drag end
+  const handleDragEnd = useCallback(() => {
+    (window as any).__chopchopDragSource = null;
+  }, []);
 
   // Calculate in/out region for display
   const inPercent = sourceInPoint !== null ? (sourceInPoint / duration) * 100 : 0;
@@ -474,6 +488,7 @@ const SourcePreview: React.FC = () => {
             <button
               draggable
               onDragStart={(e) => handleDragStart(e, 'video')}
+              onDragEnd={handleDragEnd}
               title="Drag Image to Timeline"
             >
               <Film size={14} />
@@ -496,6 +511,7 @@ const SourcePreview: React.FC = () => {
           className="source-video"
           draggable
           onDragStart={(e) => handleDragStart(e, 'both')}
+          onDragEnd={handleDragEnd}
         />
         {videoError && (
           <div className="source-video-error">
@@ -571,6 +587,7 @@ const SourcePreview: React.FC = () => {
           <button
             draggable
             onDragStart={(e) => handleDragStart(e, 'video')}
+            onDragEnd={handleDragEnd}
             title="Drag Video Only"
             disabled={sourceMedia.type === 'audio'}
           >
@@ -579,6 +596,7 @@ const SourcePreview: React.FC = () => {
           <button
             draggable
             onDragStart={(e) => handleDragStart(e, 'audio')}
+            onDragEnd={handleDragEnd}
             title="Drag Audio Only"
           >
             <Music size={14} />

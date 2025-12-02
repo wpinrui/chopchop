@@ -6,7 +6,7 @@
 
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import path from 'node:path';
-import { probeMediaFile, getMediaDuration, generateThumbnail, getMediaType } from './ffmpeg/probe';
+import { probeMediaFile, getMediaDuration, generateThumbnail, getMediaType, generateWaveformData } from './ffmpeg/probe';
 import { checkFFmpegAvailable, getFFmpegVersion } from './ffmpeg/runner';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -160,11 +160,13 @@ function registerIPCHandlers() {
     const duration = type === 'image' ? 5 : await getMediaDuration(filePath);
 
     // Generate thumbnail and convert to base64
+    // For videos, use middle of clip to avoid black frames at start
     let thumbnailDataUrl: string | null = null;
     if (type === 'video' || type === 'image') {
       const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'chopchop-'));
       const thumbPath = path.join(tempDir, `thumb-${Date.now()}.jpg`);
-      const thumbGenerated = await generateThumbnail(filePath, thumbPath, 0);
+      const thumbTime = type === 'video' ? duration / 2 : 0;
+      const thumbGenerated = await generateThumbnail(filePath, thumbPath, thumbTime);
 
       if (thumbGenerated) {
         // Read thumbnail and convert to base64
@@ -183,6 +185,11 @@ function registerIPCHandlers() {
       type,
       thumbnailDataUrl,
     };
+  });
+
+  // Async waveform generation (called separately after import for non-blocking UX)
+  ipcMain.handle('media:generateWaveform', async (_event, filePath: string) => {
+    return await generateWaveformData(filePath);
   });
 
   // File operations
