@@ -28,6 +28,42 @@
   min-width: 100px;
 }
 
+.timeline-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.snap-toggle {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.snap-toggle:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.snap-toggle.active {
+  background-color: var(--accent-blue);
+  border-color: var(--accent-blue);
+  color: #fff;
+}
+
+.snap-toggle.active:hover {
+  background-color: var(--accent-blue-hover);
+  border-color: var(--accent-blue-hover);
+}
+
 .timeline-zoom-controls {
   display: flex;
   align-items: center;
@@ -201,14 +237,20 @@
   background-color: #4a90e2;
   border: 1px solid #3a7bc8;
   border-radius: 3px;
-  cursor: pointer;
+  cursor: grab;
   overflow: hidden;
-  transition: transform 0.1s;
+  transition: transform 0.1s, box-shadow 0.1s;
 }
 
 .clip:hover {
-  transform: translateY(-2px);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.clip.dragging {
+  cursor: grabbing;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  z-index: 50;
+  opacity: 0.9;
 }
 
 .clip-content {

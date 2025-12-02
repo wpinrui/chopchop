@@ -6,8 +6,9 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
+import { Magnet, ZoomIn, ZoomOut } from 'lucide-react';
 import type { RootState } from '../../store';
-import { setPlayheadPosition, addClip } from '../../store/timelineSlice';
+import { setPlayheadPosition, addClip, updateClip } from '../../store/timelineSlice';
 import type { MediaItem, Clip } from '@types';
 import './Timeline.css';
 
@@ -19,10 +20,16 @@ const Timeline: React.FC = () => {
 
   const timelineRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const justFinishedDraggingRef = useRef(false);
 
   const [zoom, setZoom] = useState(0.01); // Zoom multiplier (exponential scale), default 1%
   const [scrollLeft, setScrollLeft] = useState(0);
   const [viewportWidth, setViewportWidth] = useState(0);
+  const [draggingClip, setDraggingClip] = useState<{ id: string; initialStart: number; mouseOffset: number } | null>(null);
+  const [snapEnabled, setSnapEnabled] = useState(true);
+
+  // Snap threshold in pixels
+  const SNAP_THRESHOLD_PX = 10;
 
   // Zoom constraints (exponential scale)
   const MIN_ZOOM = 0.005; // 0.5% - can see ~5+ minutes in viewport
@@ -71,6 +78,12 @@ const Timeline: React.FC = () => {
 
   // Handle timeline click to move playhead
   const handleTimelineClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    // Skip if we just finished dragging a clip
+    if (justFinishedDraggingRef.current) {
+      justFinishedDraggingRef.current = false;
+      return;
+    }
+
     if (!timelineRef.current) return;
 
     const rect = timelineRef.current.getBoundingClientRect();
@@ -182,6 +195,93 @@ const Timeline: React.FC = () => {
     e.dataTransfer.dropEffect = 'copy';
   }, []);
 
+  // Get all snap points (other clip edges and playhead)
+  const getSnapPoints = useCallback((excludeClipId: string): number[] => {
+    const points: number[] = [playhead]; // Always include playhead
+
+    for (const track of tracks) {
+      for (const c of track.clips) {
+        if (c.id !== excludeClipId) {
+          points.push(c.timelineStart); // Clip start
+          points.push(c.timelineStart + c.duration); // Clip end
+        }
+      }
+    }
+
+    return points;
+  }, [tracks, playhead]);
+
+  // Find nearest snap point for a given time
+  const findSnapPoint = useCallback((time: number, clipDuration: number, excludeClipId: string): number => {
+    if (!snapEnabled) return time;
+
+    const snapPoints = getSnapPoints(excludeClipId);
+    const thresholdTime = pixelsToTime(SNAP_THRESHOLD_PX);
+
+    let bestSnap = time;
+    let bestDistance = Infinity;
+
+    // Check clip start snapping to snap points
+    for (const point of snapPoints) {
+      const distance = Math.abs(time - point);
+      if (distance < thresholdTime && distance < bestDistance) {
+        bestSnap = point;
+        bestDistance = distance;
+      }
+    }
+
+    // Check clip end snapping to snap points
+    const clipEnd = time + clipDuration;
+    for (const point of snapPoints) {
+      const distance = Math.abs(clipEnd - point);
+      if (distance < thresholdTime && distance < bestDistance) {
+        bestSnap = point - clipDuration;
+        bestDistance = distance;
+      }
+    }
+
+    return Math.max(0, bestSnap);
+  }, [snapEnabled, getSnapPoints, pixelsToTime, SNAP_THRESHOLD_PX]);
+
+  // Handle clip drag start
+  const handleClipMouseDown = useCallback((e: React.MouseEvent, clip: Clip) => {
+    e.stopPropagation();
+    e.preventDefault();
+
+    if (!timelineRef.current) return;
+
+    const rect = timelineRef.current.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const clipStartPixels = timeToPixels(clip.timelineStart);
+    const mouseOffset = mouseX - clipStartPixels;
+
+    setDraggingClip({ id: clip.id, initialStart: clip.timelineStart, mouseOffset });
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      if (!timelineRef.current) return;
+
+      const rect = timelineRef.current.getBoundingClientRect();
+      const mouseX = moveEvent.clientX - rect.left;
+      const newStartPixels = mouseX - mouseOffset;
+      let newStartTime = Math.max(0, pixelsToTime(newStartPixels));
+
+      // Apply snapping
+      newStartTime = findSnapPoint(newStartTime, clip.duration, clip.id);
+
+      dispatch(updateClip({ id: clip.id, updates: { timelineStart: newStartTime } }));
+    };
+
+    const onMouseUp = () => {
+      justFinishedDraggingRef.current = true;
+      setDraggingClip(null);
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  }, [dispatch, timeToPixels, pixelsToTime, findSnapPoint]);
+
   // Format time as MM:SS:FF (or just frames for sub-second markers)
   const formatTime = (seconds: number, forRuler = false): string => {
     const mins = Math.floor(seconds / 60);
@@ -291,12 +391,25 @@ const Timeline: React.FC = () => {
       {/* Timeline toolbar */}
       <div className="timeline-toolbar">
         <div className="timeline-timecode">{formatTime(playhead)}</div>
-        <div className="timeline-zoom-controls">
-          <button onClick={handleZoomOut} title="Zoom Out">−</button>
-          <span className="zoom-level">
-            {zoom * 100 < 10 ? (zoom * 100).toFixed(1) : Math.round(zoom * 100)}%
-          </span>
-          <button onClick={handleZoomIn} title="Zoom In">+</button>
+        <div className="timeline-toolbar-right">
+          <button
+            className={`snap-toggle ${snapEnabled ? 'active' : ''}`}
+            onClick={() => setSnapEnabled(!snapEnabled)}
+            title={snapEnabled ? 'Snapping On' : 'Snapping Off'}
+          >
+            <Magnet size={16} />
+          </button>
+          <div className="timeline-zoom-controls">
+            <button onClick={handleZoomOut} title="Zoom Out">
+              <ZoomOut size={14} />
+            </button>
+            <span className="zoom-level">
+              {zoom * 100 < 10 ? (zoom * 100).toFixed(1) : Math.round(zoom * 100)}%
+            </span>
+            <button onClick={handleZoomIn} title="Zoom In">
+              <ZoomIn size={14} />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -364,11 +477,12 @@ const Timeline: React.FC = () => {
                   return (
                     <div
                       key={clip.id}
-                      className="clip"
+                      className={`clip ${draggingClip?.id === clip.id ? 'dragging' : ''}`}
                       style={{
                         left: `${left}px`,
                         width: `${width}px`,
                       }}
+                      onMouseDown={(e) => handleClipMouseDown(e, clip)}
                     >
                       <div className="clip-content">
                         <span className="clip-name">{clip.name}</span>

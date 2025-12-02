@@ -68,14 +68,23 @@ const MediaBin = forwardRef<MediaBinHandle>((props, ref) => {
     triggerImport: handleImport,
   }), [handleImport]);
 
-  // Drag and drop handlers
+  // Check if drag event contains external files (not internal media drag)
+  const isExternalFileDrag = (e: React.DragEvent): boolean => {
+    // Check if dragging files from OS (not internal media items)
+    return e.dataTransfer.types.includes('Files') &&
+           !e.dataTransfer.types.includes('application/chopchop-media');
+  };
+
+  // Drag and drop handlers - only activate for external file drops
   const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (!isExternalFileDrag(e)) return;
     e.preventDefault();
     e.stopPropagation();
     setIsDragOver(true);
   }, []);
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
+    if (!isExternalFileDrag(e)) return;
     e.preventDefault();
     e.stopPropagation();
     setIsDragOver(true);
@@ -94,6 +103,11 @@ const MediaBin = forwardRef<MediaBinHandle>((props, ref) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragOver(false);
+
+    // Ignore internal media drags
+    if (e.dataTransfer.types.includes('application/chopchop-media')) {
+      return;
+    }
 
     if (!window.electronAPI) {
       console.error('Electron API not available');
