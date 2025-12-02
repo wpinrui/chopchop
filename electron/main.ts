@@ -46,6 +46,8 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      // Allow loading local media files (safe for a local video editor)
+      webSecurity: false,
     },
   });
 

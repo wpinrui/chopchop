@@ -10,7 +10,11 @@
       "Bash(Get-ChildItem -Path \"c:\\Users\\Ivan\\Documents\\projects\\chopchop\\resources\" -Recurse -ErrorAction SilentlyContinue)",
       "Bash(Select-Object FullName)",
       "Bash(powershell -Command \"Expand-Archive -Path ffmpeg.zip -DestinationPath . -Force\")",
-      "Bash(\"c:\\Users\\Ivan\\Documents\\projects\\chopchop\\resources\\ffmpeg\\ffmpeg.exe\" -version)"
+      "Bash(\"c:\\Users\\Ivan\\Documents\\projects\\chopchop\\resources\\ffmpeg\\ffmpeg.exe\" -version)",
+      "Bash(npm run lint:types:*)",
+      "Bash(timeout /t 8 /nobreak)",
+      "Bash(Remove-Item -Path \"dist-electron\" -Recurse -Force -ErrorAction SilentlyContinue)",
+      "Bash(Remove-Item -Path \"dist\" -Recurse -Force -ErrorAction SilentlyContinue)"
     ],
     "deny": [],
     "ask": []

@@ -221,6 +221,7 @@ Each version is **fully polished and shippable**. Features arrive complete, neve
 
 These are not committed, just possibilities:
 
+- **Format conversion on import** — User-friendly dialog to transcode unsupported formats (ProRes, DNxHD, etc.) to H.264 via ffmpeg on import, with preview codec/quality options
 - **macOS support** — Electron makes this feasible
 - **Linux support** — Same as above
 - **Plugin system** — Custom effects, exporters

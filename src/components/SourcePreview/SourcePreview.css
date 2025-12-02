@@ -1,0 +1,241 @@
+/**
+ * Source Preview Styles
+ */
+
+.source-preview {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background-color: var(--bg-primary);
+}
+
+/* Empty state */
+.source-preview-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+}
+
+.source-preview-empty p {
+  margin: 4px 0;
+}
+
+.source-preview-empty .hint {
+  font-size: 12px;
+  color: var(--text-disabled);
+}
+
+/* Video container */
+.source-video-container {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--bg-secondary);
+  overflow: hidden;
+  min-height: 0;
+}
+
+.source-video {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  cursor: pointer;
+}
+
+/* Video error overlay */
+.source-video-error {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  color: var(--text-secondary);
+  padding: 20px;
+  background-color: rgba(0, 0, 0, 0.8);
+  border-radius: 4px;
+}
+
+.source-video-error p {
+  margin: 4px 0;
+}
+
+.source-video-error .hint {
+  font-size: 12px;
+  color: var(--text-disabled);
+}
+
+/* Info bar */
+.source-info-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  background-color: var(--bg-secondary);
+  border-top: 1px solid var(--border-color);
+  font-size: 11px;
+}
+
+.source-timecode {
+  font-family: 'Consolas', 'Monaco', monospace;
+  color: var(--accent-blue);
+  min-width: 90px;
+}
+
+.source-name {
+  flex: 1;
+  text-align: center;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 8px;
+}
+
+.source-duration {
+  font-family: 'Consolas', 'Monaco', monospace;
+  color: var(--text-secondary);
+  min-width: 90px;
+  text-align: right;
+}
+
+/* Scrub bar */
+.source-scrub-container {
+  padding: 4px 8px;
+  background-color: var(--bg-secondary);
+}
+
+.source-scrub-bar {
+  position: relative;
+  height: 16px;
+  background-color: var(--bg-tertiary);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.source-in-out-region {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  background-color: rgba(74, 158, 255, 0.2);
+  pointer-events: none;
+}
+
+.source-in-marker {
+  position: absolute;
+  top: 0;
+  width: 3px;
+  height: 100%;
+  background-color: var(--accent-blue);
+  border-radius: 1px 0 0 1px;
+  transform: translateX(-100%);
+}
+
+.source-out-marker {
+  position: absolute;
+  top: 0;
+  width: 3px;
+  height: 100%;
+  background-color: var(--accent-blue);
+  border-radius: 0 1px 1px 0;
+}
+
+.source-playhead {
+  position: absolute;
+  top: -2px;
+  width: 2px;
+  height: calc(100% + 4px);
+  background-color: #fff;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.source-playhead::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 6px solid #fff;
+}
+
+/* Transport controls */
+.source-transport {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  background-color: var(--bg-secondary);
+  border-top: 1px solid var(--border-color);
+}
+
+.transport-left,
+.transport-center,
+.transport-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.transport-center {
+  gap: 2px;
+}
+
+.source-transport button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 4px 6px;
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.source-transport button:hover:not(:disabled) {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-light);
+}
+
+.source-transport button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.source-transport button.play-button {
+  width: 36px;
+  height: 28px;
+  background-color: var(--accent-blue);
+  border-color: var(--accent-blue);
+  color: #fff;
+}
+
+.source-transport button.play-button:hover {
+  background-color: var(--accent-blue-hover);
+  border-color: var(--accent-blue-hover);
+  color: #fff;
+}
+
+.btn-label {
+  font-size: 10px;
+  font-weight: 500;
+}
+
+/* Drag buttons */
+.transport-right button {
+  cursor: grab;
+}
+
+.transport-right button:active {
+  cursor: grabbing;
+}

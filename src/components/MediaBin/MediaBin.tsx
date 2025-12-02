@@ -8,6 +8,7 @@ import React, { useCallback, useState, useImperativeHandle, forwardRef } from 'r
 import { useSelector, useDispatch } from 'react-redux';
 import type { RootState } from '../../store';
 import { addMediaItem } from '../../store/projectSlice';
+import { setSourceMediaId } from '../../store/uiSlice';
 import type { MediaItem } from '@types';
 import './MediaBin.css';
 
@@ -196,6 +197,7 @@ const MediaBin = forwardRef<MediaBinHandle>((props, ref) => {
               key={item.id}
               className="media-item"
               draggable
+              onDoubleClick={() => dispatch(setSourceMediaId(item.id))}
               onDragStart={(e) => {
                 // Store media item data for timeline drop
                 e.dataTransfer.setData('application/chopchop-media', JSON.stringify(item));

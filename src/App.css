@@ -11,28 +11,6 @@
   overflow: hidden;
 }
 
-/* Header */
-.app-header {
-  display: flex;
-  align-items: center;
-  height: var(--header-height);
-  background-color: var(--bg-secondary);
-  border-bottom: 1px solid var(--border-color);
-  padding: 0 var(--spacing-md);
-  gap: var(--spacing-md);
-}
-
-.app-title {
-  font-weight: 600;
-  font-size: 14px;
-  color: var(--accent-blue);
-}
-
-.project-name {
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-
 /* Body */
 .app-body {
   flex: 1;
@@ -188,7 +166,7 @@
   align-items: center;
   justify-content: center;
   padding: 0;
-  background-color: #000;
+  background-color: var(--bg-secondary);
 }
 
 .viewer-placeholder {

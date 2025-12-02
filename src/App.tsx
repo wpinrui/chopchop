@@ -7,6 +7,7 @@ import { useSelector, useDispatch } from 'react-redux';
 import type { RootState } from './store';
 import MediaBin, { type MediaBinHandle } from './components/MediaBin/MediaBin';
 import Timeline from './components/Timeline/Timeline';
+import SourcePreview from './components/SourcePreview/SourcePreview';
 import { addTrack } from './store/timelineSlice';
 import './App.css';
 
@@ -146,13 +147,13 @@ const App: React.FC = () => {
     document.addEventListener('mouseup', onMouseUp);
   }, [bottomLeftWidth]);
 
+  // Update window title with project name
+  useEffect(() => {
+    document.title = `ChopChop - ${projectName}`;
+  }, [projectName]);
+
   return (
     <div className="app">
-      <div className="app-header">
-        <div className="app-title">ChopChop</div>
-        <div className="project-name">{projectName}</div>
-      </div>
-
       <div className="app-body">
         {/* Top row: Source/Effects (left) | Sequence Preview (right) */}
         <div className="top-row" style={{ height: `${topRowHeight}%` }}>
@@ -175,15 +176,11 @@ const App: React.FC = () => {
             </div>
             <div className="panel-content">
               {topLeftTab === 'source' ? (
-                <>
-                  {/* TODO: Source clip preview */}
-                  <p>Source clip preview and controls</p>
-                </>
+                <SourcePreview />
               ) : (
-                <>
-                  {/* TODO: Effect controls */}
+                <div className="placeholder-content">
                   <p>Effect controls and properties</p>
-                </>
+                </div>
               )}
             </div>
           </div>

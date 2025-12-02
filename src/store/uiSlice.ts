@@ -7,7 +7,13 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import type { UIState, Tool, InspectorTab, PanelLayout } from '@types';
 
-const initialState: UIState = {
+interface ExtendedUIState extends UIState {
+  sourceMediaId: string | null;
+  sourceInPoint: number | null;
+  sourceOutPoint: number | null;
+}
+
+const initialState: ExtendedUIState = {
   selectedClipIds: [],
   selectedTrackId: null,
   activeTool: 'select',
@@ -17,6 +23,9 @@ const initialState: UIState = {
   },
   commandCrafterOpen: false,
   inspectorTab: 'clip',
+  sourceMediaId: null,
+  sourceInPoint: null,
+  sourceOutPoint: null,
 };
 
 const uiSlice = createSlice({
@@ -69,6 +78,22 @@ const uiSlice = createSlice({
     setInspectorTab: (state, action: PayloadAction<InspectorTab>) => {
       state.inspectorTab = action.payload;
     },
+
+    // Source preview
+    setSourceMediaId: (state, action: PayloadAction<string | null>) => {
+      state.sourceMediaId = action.payload;
+      // Clear in/out points when changing source
+      state.sourceInPoint = null;
+      state.sourceOutPoint = null;
+    },
+
+    setSourceInPoint: (state, action: PayloadAction<number | null>) => {
+      state.sourceInPoint = action.payload;
+    },
+
+    setSourceOutPoint: (state, action: PayloadAction<number | null>) => {
+      state.sourceOutPoint = action.payload;
+    },
   },
 });
 
@@ -83,6 +108,9 @@ export const {
   toggleCommandCrafter,
   setCommandCrafterOpen,
   setInspectorTab,
+  setSourceMediaId,
+  setSourceInPoint,
+  setSourceOutPoint,
 } = uiSlice.actions;
 
 export default uiSlice.reducer;

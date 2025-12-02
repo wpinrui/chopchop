@@ -10,7 +10,7 @@ import { DEFAULT_PROJECT_SETTINGS } from '@types';
 
 const initialState: Project = {
   version: '0.1.0',
-  name: 'Untitled Project',
+  name: 'Untitled',
   path: null,
   dirty: false,
   settings: DEFAULT_PROJECT_SETTINGS,
