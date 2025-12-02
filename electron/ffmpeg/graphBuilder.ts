@@ -197,21 +197,24 @@ export function buildFilterGraph(
     // Build normalization filter chain:
     // 1. Trim to clip segment
     // 2. Reset PTS
-    // 3. Scale to target resolution (preserve aspect ratio, pad if needed)
+    // 3. Maintain original dimensions (pad if smaller, crop if larger, centered)
     // 4. Set consistent frame rate
     // 5. Set consistent pixel format (yuv420p for maximum compatibility)
-    const scaleFilter = `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2:black`;
+    // Note: Using pad+crop to maintain original clip dimensions without scaling
+    // - pad ensures clip is at least target size (adds black bars if smaller)
+    // - crop cuts to exact target size (crops centered if larger)
+    const maintainDimFilter = `pad=w=max(${targetWidth}\\,iw):h=max(${targetHeight}\\,ih):x=(ow-iw)/2:y=(oh-ih)/2:color=black,crop=${targetWidth}:${targetHeight}:(iw-${targetWidth})/2:(ih-${targetHeight})/2`;
     const fpsFilter = `fps=${targetFps}`;
     const formatFilter = 'format=yuv420p';
 
     // Handle image files (loop them)
     if (clip.mediaItem.type === 'image') {
-      filterComplex += `[${inputIdx}:v]loop=loop=-1:size=1,trim=0:${clip.duration},setpts=PTS-STARTPTS,${scaleFilter},${fpsFilter},${formatFilter}[${outputLabel}];\n`;
+      filterComplex += `[${inputIdx}:v]loop=loop=-1:size=1,trim=0:${clip.duration},setpts=PTS-STARTPTS,${maintainDimFilter},${fpsFilter},${formatFilter}[${outputLabel}];\n`;
     } else {
       // Video file - trim to clip segment and normalize
       const trimStart = clip.mediaIn;
       const trimEnd = clip.mediaOut;
-      filterComplex += `[${inputIdx}:v]trim=start=${trimStart}:end=${trimEnd},setpts=PTS-STARTPTS,${scaleFilter},${fpsFilter},${formatFilter}[${outputLabel}];\n`;
+      filterComplex += `[${inputIdx}:v]trim=start=${trimStart}:end=${trimEnd},setpts=PTS-STARTPTS,${maintainDimFilter},${fpsFilter},${formatFilter}[${outputLabel}];\n`;
     }
 
     videoOutputs.push(`[${outputLabel}]`);

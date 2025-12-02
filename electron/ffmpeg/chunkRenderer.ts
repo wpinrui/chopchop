@@ -267,23 +267,29 @@ export async function renderChunk(
     const clipLabel = `clip${videoOutputCount}`;
     const overlayLabel = `comp${videoOutputCount}`;
 
-    // Build the clip filter chain
+    // Build the clip filter chain - maintain original dimensions (scale proxy to original, then pad+crop)
+    // Get original dimensions from metadata (proxy may be smaller)
+    const origW = media.metadata?.width || width;
+    const origH = media.metadata?.height || height;
+
     if (media.type === 'image') {
-      // Image: loop, trim to duration, scale to fit
+      // Image: loop, trim to duration, scale to original dimensions, then pad+crop to sequence
       filterParts.push(
         `[${inputIndex}:v]loop=loop=-1:size=1,` +
           `trim=0:${sourceDuration},setpts=PTS-STARTPTS,` +
-          `scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
-          `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black,` +
+          `scale=${origW}:${origH},` +
+          `pad=w=max(${width}\\,iw):h=max(${height}\\,ih):x=(ow-iw)/2:y=(oh-ih)/2:color=black,` +
+          `crop=${width}:${height}:(iw-${width})/2:(ih-${height})/2,` +
           `format=yuva420p[${clipLabel}]`
       );
     } else {
-      // Video: trim to segment, scale to fit
+      // Video: trim to segment, scale to original dimensions, then pad+crop to sequence
       filterParts.push(
         `[${inputIndex}:v]trim=start=${sourceIn}:end=${sourceOut},` +
           `setpts=PTS-STARTPTS,` +
-          `scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
-          `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black,` +
+          `scale=${origW}:${origH},` +
+          `pad=w=max(${width}\\,iw):h=max(${height}\\,ih):x=(ow-iw)/2:y=(oh-ih)/2:color=black,` +
+          `crop=${width}:${height}:(iw-${width})/2:(ih-${height})/2,` +
           `fps=${fps},format=yuva420p[${clipLabel}]`
       );
     }
@@ -745,22 +751,28 @@ export async function renderFullPreview(
         segmentCounter++;
       }
 
-      // Add the clip
+      // Add the clip - maintain original dimensions (scale proxy to original, then pad+crop)
       const clipLabel = `seg${segmentCounter}`;
+      // Get original dimensions from metadata (proxy may be smaller)
+      const origW = mediaItem.metadata?.width || width;
+      const origH = mediaItem.metadata?.height || height;
+
       if (mediaItem.type === 'image') {
         filterParts.push(
           `[${inputIndex}:v]loop=loop=-1:size=1,` +
             `trim=0:${clip.duration},setpts=PTS-STARTPTS,` +
-            `scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
-            `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black,` +
+            `scale=${origW}:${origH},` +
+            `pad=w=max(${width}\\,iw):h=max(${height}\\,ih):x=(ow-iw)/2:y=(oh-ih)/2:color=black,` +
+            `crop=${width}:${height}:(iw-${width})/2:(ih-${height})/2,` +
             `fps=${fps},format=yuv420p[${clipLabel}]`
         );
       } else {
         filterParts.push(
           `[${inputIndex}:v]trim=start=${clip.mediaIn}:end=${clip.mediaOut},` +
             `setpts=PTS-STARTPTS,` +
-            `scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
-            `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black,` +
+            `scale=${origW}:${origH},` +
+            `pad=w=max(${width}\\,iw):h=max(${height}\\,ih):x=(ow-iw)/2:y=(oh-ih)/2:color=black,` +
+            `crop=${width}:${height}:(iw-${width})/2:(ih-${height})/2,` +
             `fps=${fps},format=yuv420p[${clipLabel}]`
         );
       }

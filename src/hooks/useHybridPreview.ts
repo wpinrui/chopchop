@@ -113,7 +113,7 @@ export function useHybridPreview(): [HybridPreviewState, HybridPreviewActions] {
     return maxEnd;
   }, [timeline.tracks]);
 
-  // Timeline hash for change detection
+  // Timeline hash for change detection (clips only)
   const timelineHash = useMemo(() => {
     return timeline.tracks
       .flatMap((track) =>
@@ -124,6 +124,14 @@ export function useHybridPreview(): [HybridPreviewState, HybridPreviewActions] {
       )
       .join('|');
   }, [timeline.tracks]);
+
+  // Settings hash for detecting resolution/framerate changes
+  const settingsHash = useMemo(() => {
+    return `${settings.resolution[0]}x${settings.resolution[1]}@${settings.frameRate}`;
+  }, [settings.resolution, settings.frameRate]);
+
+  // Track last settings hash to detect changes
+  const lastSettingsHashRef = useRef<string>('');
 
   // Initialize audio context for scrub audio
   useEffect(() => {
@@ -202,6 +210,7 @@ export function useHybridPreview(): [HybridPreviewState, HybridPreviewActions] {
         setIsInitialized(true);
         setChunks((result.chunks || []) as ChunkInfo[]);
         lastTimelineHashRef.current = timelineHash;
+        lastSettingsHashRef.current = settingsHash;
 
         // Get initial cache stats
         const stats = await window.electronAPI.preview.getCacheStats();
@@ -210,7 +219,7 @@ export function useHybridPreview(): [HybridPreviewState, HybridPreviewActions] {
     } catch (error) {
       console.error('[HybridPreview] Failed to initialize:', error);
     }
-  }, [timeline.tracks, media, settings, timelineDuration, projectPath, timelineHash]);
+  }, [timeline.tracks, media, settings, timelineDuration, projectPath, timelineHash, settingsHash]);
 
   // Update timeline after edits
   const updateTimeline = useCallback(async () => {
@@ -257,6 +266,23 @@ export function useHybridPreview(): [HybridPreviewState, HybridPreviewActions] {
       updateTimeline();
     }
   }, [isInitialized, timelineHash, updateTimeline]);
+
+  // Re-initialize when settings change (resolution, frame rate)
+  // This requires clearing cache since all chunks are at the wrong resolution
+  useEffect(() => {
+    if (isInitialized && settingsHash !== lastSettingsHashRef.current) {
+      lastSettingsHashRef.current = settingsHash;
+
+      // Clear cache and re-initialize with new settings
+      (async () => {
+        if (window.electronAPI) {
+          await window.electronAPI.preview.clearAllCache();
+        }
+        setIsInitialized(false);
+        // Re-initialization will happen via the auto-initialize effect
+      })();
+    }
+  }, [isInitialized, settingsHash]);
 
   // Extract a single frame
   const extractFrame = useCallback(async (time: number): Promise<ExtractedFrame> => {

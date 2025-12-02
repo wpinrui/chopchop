@@ -382,20 +382,28 @@ export class ChunkRenderer {
       const clipLabel = `v${videoIdx}`;
       const overlayLabel = `comp${videoIdx}`;
 
+      // Get original dimensions from metadata (proxy may be smaller)
+      const origW = media.metadata?.width || width;
+      const origH = media.metadata?.height || height;
+
       if (media.type === 'image') {
+        // Maintain original dimensions (scale proxy to original, then pad+crop)
         filterParts.push(
           `[${inputIndex}:v]loop=loop=-1:size=1,` +
           `trim=0:${sourceDuration},setpts=PTS-STARTPTS,` +
-          `scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
-          `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black,` +
+          `scale=${origW}:${origH},` +
+          `pad=w=max(${width}\\,iw):h=max(${height}\\,ih):x=(ow-iw)/2:y=(oh-ih)/2:color=black,` +
+          `crop=${width}:${height}:(iw-${width})/2:(ih-${height})/2,` +
           `format=yuva420p[${clipLabel}]`
         );
       } else {
+        // Maintain original dimensions (scale proxy to original, then pad+crop)
         filterParts.push(
           `[${inputIndex}:v]trim=start=${sourceIn}:end=${sourceOut},` +
           `setpts=PTS-STARTPTS,` +
-          `scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
-          `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black,` +
+          `scale=${origW}:${origH},` +
+          `pad=w=max(${width}\\,iw):h=max(${height}\\,ih):x=(ow-iw)/2:y=(oh-ih)/2:color=black,` +
+          `crop=${width}:${height}:(iw-${width})/2:(ih-${height})/2,` +
           `fps=${fps},format=yuva420p[${clipLabel}]`
         );
       }

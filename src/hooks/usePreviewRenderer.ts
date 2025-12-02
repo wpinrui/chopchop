@@ -66,6 +66,14 @@ export function usePreviewRenderer() {
     return clipData;
   }, [timeline.tracks]);
 
+  // Settings hash - detect resolution/framerate changes that require re-render
+  const settingsHash = useMemo(() => {
+    return `${settings.resolution[0]}x${settings.resolution[1]}@${settings.frameRate}`;
+  }, [settings.resolution, settings.frameRate]);
+
+  // Track last settings hash
+  const lastSettingsHashRef = useRef<string>('');
+
   // Run the unified preview pipeline
   const renderPreview = useCallback(async () => {
     if (isRenderingRef.current) return;
@@ -147,6 +155,33 @@ export function usePreviewRenderer() {
       renderPreview();
     }, DEBOUNCE_TIME);
   }, [timelineHash, timelineDuration, dispatch, renderPreview]);
+
+  // Detect settings changes (resolution, frame rate) and trigger re-render
+  useEffect(() => {
+    // Skip if hash hasn't changed
+    if (settingsHash === lastSettingsHashRef.current) {
+      return;
+    }
+
+    // Skip initial (set ref but don't trigger)
+    const isInitial = lastSettingsHashRef.current === '';
+    lastSettingsHashRef.current = settingsHash;
+
+    if (isInitial) {
+      return;
+    }
+
+    // Settings changed - mark as stale and re-render
+    dispatch(markPreviewStale());
+
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+
+    debounceTimerRef.current = setTimeout(() => {
+      renderPreview();
+    }, DEBOUNCE_TIME);
+  }, [settingsHash, dispatch, renderPreview]);
 
   // Listen for pipeline progress updates (unified progress from both phases)
   useEffect(() => {

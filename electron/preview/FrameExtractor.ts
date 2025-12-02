@@ -155,7 +155,7 @@ export class FrameExtractor {
         '-ss', String(mediaTime),
         '-i', sourcePath,
         '-vframes', '1',
-        '-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black,format=rgba`,
+        '-vf', `pad=w=max(${width}\\,iw):h=max(${height}\\,ih):x=(ow-iw)/2:y=(oh-ih)/2:color=black,crop=${width}:${height}:(iw-${width})/2:(ih-${height})/2,format=rgba`,
         '-f', 'rawvideo',
         '-pix_fmt', 'rgba',
         'pipe:1',
@@ -235,10 +235,10 @@ export class FrameExtractor {
       const clipLabel = `clip${i}`;
       const outputLabel = i === clipsAtTime.length - 1 ? 'out' : `comp${i}`;
 
-      // Scale and pad each input
+      // Maintain original dimensions (pad if smaller, crop if larger, centered)
       filterParts.push(
-        `[${i}:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
-        `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black,` +
+        `[${i}:v]pad=w=max(${width}\\,iw):h=max(${height}\\,ih):x=(ow-iw)/2:y=(oh-ih)/2:color=black,` +
+        `crop=${width}:${height}:(iw-${width})/2:(ih-${height})/2,` +
         `format=yuva420p[${clipLabel}]`
       );
 
