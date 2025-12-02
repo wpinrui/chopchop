@@ -219,10 +219,12 @@ const MediaBin = forwardRef<MediaBinHandle>((props, ref) => {
                   {item.name}
                 </div>
                 <div className="media-details">
-                  {item.type === 'video' && item.metadata.width && (
+                  {(item.type === 'video' || item.type === 'image') && item.metadata.width && (
                     <span>{item.metadata.width}×{item.metadata.height}</span>
                   )}
-                  {item.duration > 0 && (
+                  {item.type === 'image' ? (
+                    <span>Still</span>
+                  ) : item.duration > 0 && (
                     <span>{formatDuration(item.duration)}</span>
                   )}
                   {item.metadata.fileSize && (

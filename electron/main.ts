@@ -154,8 +154,10 @@ function registerIPCHandlers() {
 
   ipcMain.handle('media:probe', async (_event, filePath: string) => {
     const metadata = await probeMediaFile(filePath);
-    const duration = await getMediaDuration(filePath);
     const type = getMediaType(filePath, metadata || undefined);
+
+    // Images have no duration - use default of 5 seconds for timeline
+    const duration = type === 'image' ? 5 : await getMediaDuration(filePath);
 
     // Generate thumbnail and convert to base64
     let thumbnailDataUrl: string | null = null;

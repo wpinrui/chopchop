@@ -169,9 +169,12 @@ const Timeline: React.FC = () => {
       const dropTime = pixelsToTime(dropX + scrollLeft);
 
       // Create clip from media item
+      // Images are treated as video clips (still frames)
+      const clipType = mediaItem.type === 'audio' ? 'audio' : 'video';
+
       const clip: Clip = {
         id: `clip-${Date.now()}-${Math.random()}`,
-        type: mediaItem.type === 'video' ? 'video' : 'audio',
+        type: clipType,
         mediaId: mediaItem.id,
         trackId: trackId,
         timelineStart: Math.max(0, dropTime),

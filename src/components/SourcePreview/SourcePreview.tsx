@@ -18,6 +18,7 @@ import {
   Film,
   Music,
   Link2,
+  Image,
 } from 'lucide-react';
 import type { RootState } from '../../store';
 import { setSourceInPoint, setSourceOutPoint, setActivePane } from '../../store/uiSlice';
@@ -402,19 +403,68 @@ const SourcePreview: React.FC = () => {
     );
   }
 
-  // Convert file path to file:// URL for video element
+  // Convert file path to file:// URL for media element
   // Using forward slashes and proper file:// format (file:///C:/path/to/file)
-  const videoSrc = sourceMedia.path
+  const mediaSrc = sourceMedia.path
     ? `file:///${sourceMedia.path.replace(/\\/g, '/')}`
     : '';
 
+  const isImage = sourceMedia.type === 'image';
+
+  // Render image preview (simplified - no playback controls)
+  if (isImage) {
+    return (
+      <div className="source-preview" onClick={handlePaneClick}>
+        {/* Image display */}
+        <div className="source-video-container">
+          <img
+            src={mediaSrc}
+            className="source-video"
+            alt={sourceMedia.name}
+          />
+        </div>
+
+        {/* Info bar */}
+        <div className="source-info-bar">
+          <span className="source-timecode">
+            {sourceMedia.metadata.width}×{sourceMedia.metadata.height}
+          </span>
+          <span className="source-name" title={sourceMedia.name}>{sourceMedia.name}</span>
+          <span className="source-duration">5s still</span>
+        </div>
+
+        {/* Simplified transport - just drag to timeline */}
+        <div className="source-transport">
+          <div className="transport-left">
+            <Image size={14} />
+            <span className="btn-label" style={{ marginLeft: 4 }}>Still Image</span>
+          </div>
+
+          <div className="transport-center" />
+
+          <div className="transport-right">
+            <button
+              draggable
+              onDragStart={(e) => handleDragStart(e, 'video')}
+              title="Drag Image to Timeline"
+            >
+              <Film size={14} />
+              <span className="btn-label">Add</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Render video/audio preview with full transport controls
   return (
     <div className="source-preview" onClick={handlePaneClick}>
       {/* Video display */}
       <div className="source-video-container">
         <video
           ref={videoRef}
-          src={videoSrc}
+          src={mediaSrc}
           className="source-video"
           onClick={handlePlayPause}
         />

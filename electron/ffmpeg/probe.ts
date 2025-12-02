@@ -156,6 +156,7 @@ export async function getMediaDuration(filePath: string): Promise<number> {
 
 /**
  * Generate thumbnail for a media file at specified time
+ * For images, timeSeconds is ignored since images don't have time dimension
  */
 export async function generateThumbnail(
   filePath: string,
@@ -163,19 +164,39 @@ export async function generateThumbnail(
   timeSeconds: number = 0
 ): Promise<boolean> {
   try {
-    const result = await runFFmpeg([
-      '-ss',
-      timeSeconds.toString(),
-      '-i',
-      filePath,
-      '-vframes',
-      '1',
-      '-q:v',
-      '2',
-      '-y',
-      outputPath,
-    ]);
+    const ext = filePath.toLowerCase().split('.').pop() || '';
+    const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff'];
+    const isImage = imageExts.includes(ext);
 
+    // For images, just scale to thumbnail size (no seek needed)
+    // For videos, seek to the specified time first
+    const args = isImage
+      ? [
+          '-i',
+          filePath,
+          '-vf',
+          'scale=320:-1',  // Scale to 320px width, maintain aspect ratio
+          '-vframes',
+          '1',
+          '-q:v',
+          '2',
+          '-y',
+          outputPath,
+        ]
+      : [
+          '-ss',
+          timeSeconds.toString(),
+          '-i',
+          filePath,
+          '-vframes',
+          '1',
+          '-q:v',
+          '2',
+          '-y',
+          outputPath,
+        ];
+
+    const result = await runFFmpeg(args);
     return result.success;
   } catch {
     return false;
