@@ -193,6 +193,11 @@ function createAppMenu() {
         { role: 'zoomOut' },
         { type: 'separator' },
         { role: 'togglefullscreen' },
+        { type: 'separator' },
+        {
+          label: 'Reset Layout',
+          click: () => mainWindow?.webContents.send('menu:resetLayout'),
+        },
       ],
     },
     // Help menu

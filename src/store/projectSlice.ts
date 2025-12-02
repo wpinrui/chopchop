@@ -45,6 +45,23 @@ const projectSlice = createSlice({
       state.dirty = true;
     },
 
+    // Initialize sequence settings from media metadata (called when first clip is added)
+    initializeSequenceFromMedia: (
+      state,
+      action: PayloadAction<{ width: number; height: number; frameRate?: number }>
+    ) => {
+      // Only initialize if not already done
+      if (!state.settings.sequenceInitialized) {
+        const { width, height, frameRate } = action.payload;
+        state.settings.resolution = [width, height];
+        if (frameRate && frameRate > 0) {
+          state.settings.frameRate = Math.round(frameRate);
+        }
+        state.settings.sequenceInitialized = true;
+        state.dirty = true;
+      }
+    },
+
     // Media bin
     addMediaItem: (state, action: PayloadAction<MediaItem>) => {
       state.media.push(action.payload);
@@ -84,6 +101,7 @@ export const {
   markClean,
   markDirty,
   updateSettings,
+  initializeSequenceFromMedia,
   addMediaItem,
   removeMediaItem,
   updateMediaItem,

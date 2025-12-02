@@ -120,6 +120,10 @@ const electronAPI = {
       ipcRenderer.on('menu:redo', callback);
       return () => ipcRenderer.removeListener('menu:redo', callback);
     },
+    onResetLayout: (callback: () => void) => {
+      ipcRenderer.on('menu:resetLayout', callback);
+      return () => ipcRenderer.removeListener('menu:resetLayout', callback);
+    },
   },
 };
 

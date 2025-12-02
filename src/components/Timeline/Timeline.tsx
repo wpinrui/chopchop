@@ -10,6 +10,7 @@ import { Magnet, ZoomIn, ZoomOut, Link } from 'lucide-react';
 import type { RootState } from '../../store';
 import { setPlayheadPosition, addClip, updateClip, removeClip, unlinkClips, linkClips } from '../../store/timelineSlice';
 import { selectClip, addToSelection, removeFromSelection, clearSelection } from '../../store/uiSlice';
+import { initializeSequenceFromMedia } from '../../store/projectSlice';
 import type { Clip } from '@types';
 import WaveformCanvas from './WaveformCanvas';
 import './Timeline.css';
@@ -21,6 +22,7 @@ const Timeline: React.FC = () => {
   const fps = useSelector((state: RootState) => state.project.settings.frameRate);
   const media = useSelector((state: RootState) => state.project.media);
   const selectedClipIds = useSelector((state: RootState) => state.ui.selectedClipIds);
+  const sequenceInitialized = useSelector((state: RootState) => state.project.settings.sequenceInitialized);
 
   const timelineRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -302,6 +304,15 @@ const Timeline: React.FC = () => {
         // Find video track (or use current if it's a video track)
         const videoTrack = track.type === 'video' ? track : tracks.find(t => t.type === 'video');
         if (videoTrack) {
+          // Auto-initialize sequence from first video clip
+          if (!sequenceInitialized && mediaItem.metadata.width && mediaItem.metadata.height) {
+            dispatch(initializeSequenceFromMedia({
+              width: mediaItem.metadata.width,
+              height: mediaItem.metadata.height,
+              frameRate: mediaItem.metadata.frameRate,
+            }));
+          }
+
           // Handle overlaps before adding the new clip
           handleOverlapsOnDrop(videoTrack.id, clipStart, clipEnd, []);
 
@@ -351,7 +362,7 @@ const Timeline: React.FC = () => {
     } catch (error) {
       console.error('Error dropping media on timeline:', error);
     }
-  }, [dispatch, pixelsToTime, scrollLeft, media, tracks, handleOverlapsOnDrop]);
+  }, [dispatch, pixelsToTime, scrollLeft, media, tracks, handleOverlapsOnDrop, sequenceInitialized]);
 
   const handleTrackDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();

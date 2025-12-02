@@ -30,12 +30,12 @@
 }
 
 .top-row {
-  min-height: 200px;
+  min-height: 100px;
 }
 
 .bottom-row {
   flex: 1;
-  min-height: 200px;
+  min-height: 100px;
 }
 
 /* Resizers */
@@ -141,17 +141,17 @@
 
 /* Specific panels */
 .effects-panel {
-  min-width: 200px;
+  min-width: 100px;
   flex-shrink: 0;
 }
 
 .sequence-preview-panel {
   flex: 1;
-  min-width: 400px;
+  min-width: 150px;
 }
 
 .media-bin-panel {
-  min-width: 200px;
+  min-width: 100px;
   flex-shrink: 0;
 }
 
@@ -161,7 +161,7 @@
 
 .timeline-panel {
   flex: 1;
-  min-width: 400px;
+  min-width: 150px;
 }
 
 .timeline-content {
@@ -170,8 +170,6 @@
 
 .viewer-content {
   display: flex;
-  align-items: center;
-  justify-content: center;
   padding: 0;
   background-color: var(--bg-secondary);
 }

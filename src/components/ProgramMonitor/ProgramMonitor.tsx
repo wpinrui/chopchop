@@ -2,8 +2,8 @@
  * Program Monitor Component
  *
  * Displays timeline preview at current playhead position.
- * For simple cases (single clip), uses native video element.
- * Future: FFmpeg-based compositing for complex timelines.
+ * Composites video/images onto a canvas at sequence resolution.
+ * Uses letterboxing/pillarboxing to fit content that doesn't match aspect ratio.
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -21,11 +21,20 @@ import {
 import type { RootState } from '../../store';
 import { setPlayheadPosition } from '../../store/timelineSlice';
 import { setActivePane, setPlayingPane } from '../../store/uiSlice';
+import { updateSettings } from '../../store/projectSlice';
 import type { Track, Clip, MediaItem } from '@types';
 import './ProgramMonitor.css';
 
 // Playback speeds for J/L shuttle control
 const PLAYBACK_SPEEDS = [0.5, 1, 2, 4];
+
+// Preview quality options
+const PREVIEW_QUALITY_OPTIONS = [
+  { value: 1, label: 'Full' },
+  { value: 0.5, label: '1/2' },
+  { value: 0.25, label: '1/4' },
+  { value: 0.125, label: '1/8' },
+];
 
 interface ClipAtPlayhead {
   clip: Clip;
@@ -37,7 +46,13 @@ interface ClipAtPlayhead {
 
 const ProgramMonitor: React.FC = () => {
   const dispatch = useDispatch();
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Container size for calculating canvas display dimensions
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
 
   // Get timeline state from Redux
   const tracks = useSelector((state: RootState) => state.timeline.tracks);
@@ -46,6 +61,15 @@ const ProgramMonitor: React.FC = () => {
   const fps = useSelector((state: RootState) => state.project.settings.frameRate);
   const activePane = useSelector((state: RootState) => state.ui.activePane);
   const playingPane = useSelector((state: RootState) => state.ui.playingPane);
+
+  // Sequence settings
+  const sequenceResolution = useSelector((state: RootState) => state.project.settings.resolution);
+  const backgroundColor = useSelector((state: RootState) => state.project.settings.backgroundColor);
+  const previewQuality = useSelector((state: RootState) => state.project.settings.previewQuality) ?? 1;
+  const [fullWidth, fullHeight] = sequenceResolution;
+  // Apply preview quality scaling - canvas renders at reduced resolution
+  const seqWidth = Math.round(fullWidth * previewQuality);
+  const seqHeight = Math.round(fullHeight * previewQuality);
 
   const isActive = activePane === 'program';
   // Program monitor handles playback shortcuts when:
@@ -65,6 +89,94 @@ const ProgramMonitor: React.FC = () => {
   // Track which clip we're currently showing to avoid re-seeking unnecessarily
   const currentClipRef = useRef<string | null>(null);
   const seekingRef = useRef(false);
+  const animationFrameRef = useRef<number | null>(null);
+
+  // Track container size with ResizeObserver
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) {
+        setContainerSize({
+          width: entry.contentRect.width,
+          height: entry.contentRect.height,
+        });
+      }
+    });
+
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
+  // Calculate canvas display size to fill container while maintaining aspect ratio
+  const canvasDisplaySize = (() => {
+    if (containerSize.width === 0 || containerSize.height === 0) {
+      return { width: seqWidth, height: seqHeight };
+    }
+
+    const containerAspect = containerSize.width / containerSize.height;
+    const canvasAspect = seqWidth / seqHeight;
+
+    if (canvasAspect > containerAspect) {
+      // Canvas is wider - fit to width
+      return {
+        width: containerSize.width,
+        height: containerSize.width / canvasAspect,
+      };
+    } else {
+      // Canvas is taller - fit to height
+      return {
+        width: containerSize.height * canvasAspect,
+        height: containerSize.height,
+      };
+    }
+  })();
+
+  // Draw content onto the canvas, centered, cropped if larger than sequence
+  // Source is scaled by previewQuality to match reduced canvas resolution
+  const drawToCanvas = useCallback((source: HTMLVideoElement | HTMLImageElement | null) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Fill background
+    ctx.fillStyle = backgroundColor;
+    ctx.fillRect(0, 0, seqWidth, seqHeight);
+
+    if (!source) return;
+
+    // Get source dimensions
+    const srcWidth = source instanceof HTMLVideoElement ? source.videoWidth : source.naturalWidth;
+    const srcHeight = source instanceof HTMLVideoElement ? source.videoHeight : source.naturalHeight;
+
+    if (srcWidth === 0 || srcHeight === 0) return;
+
+    // Scale source dimensions by preview quality
+    const scaledSrcWidth = srcWidth * previewQuality;
+    const scaledSrcHeight = srcHeight * previewQuality;
+
+    // Center the scaled source on the canvas
+    const drawX = (seqWidth - scaledSrcWidth) / 2;
+    const drawY = (seqHeight - scaledSrcHeight) / 2;
+
+    ctx.drawImage(source, drawX, drawY, scaledSrcWidth, scaledSrcHeight);
+  }, [seqWidth, seqHeight, backgroundColor, previewQuality]);
+
+  // Clear canvas to background color
+  const clearCanvas = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.fillStyle = backgroundColor;
+    ctx.fillRect(0, 0, seqWidth, seqHeight);
+  }, [seqWidth, seqHeight, backgroundColor]);
 
   // Calculate timeline duration
   const timelineDuration = Math.max(
@@ -120,6 +232,9 @@ const ProgramMonitor: React.FC = () => {
     const video = videoRef.current;
     if (!video || !clipAtPlayhead || isPlaying || seekingRef.current) return;
 
+    // Only sync for video clips (not images)
+    if (clipAtPlayhead.media.type === 'image') return;
+
     // Only seek if we're showing a different position
     const targetTime = clipAtPlayhead.mediaTime;
     const timeDiff = Math.abs(video.currentTime - targetTime);
@@ -132,37 +247,62 @@ const ProgramMonitor: React.FC = () => {
     }
   }, [clipAtPlayhead, isPlaying]);
 
+  // Draw to canvas when clip or playhead changes (for static frames)
+  useEffect(() => {
+    if (isPlaying) return; // Don't redraw while playing - the animation loop handles it
+
+    if (!clipAtPlayhead) {
+      // No clip at playhead - show background
+      clearCanvas();
+      return;
+    }
+
+    if (clipAtPlayhead.media.type === 'image') {
+      // For images, load and draw
+      const img = imageRef.current;
+      if (img) {
+        img.src = `file:///${clipAtPlayhead.media.path.replace(/\\/g, '/')}`;
+      }
+    } else {
+      // For video, draw current frame once video seeks
+      const video = videoRef.current;
+      if (video && !seekingRef.current && video.readyState >= 2) {
+        drawToCanvas(video);
+      }
+    }
+  }, [clipAtPlayhead, isPlaying, drawToCanvas, clearCanvas]);
+
+  // Handle image load
+  useEffect(() => {
+    const img = imageRef.current;
+    if (!img) return;
+
+    const handleLoad = () => {
+      drawToCanvas(img);
+    };
+
+    img.addEventListener('load', handleLoad);
+    return () => img.removeEventListener('load', handleLoad);
+  }, [drawToCanvas]);
+
   // Handle video events
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
 
-    const handleTimeUpdate = () => {
-      if (!isPlaying || !clipAtPlayhead) return;
-
-      // Update timeline playhead based on video time
-      const timeInClip = video.currentTime - clipAtPlayhead.clip.mediaIn;
-      const newPlayheadPosition = clipAtPlayhead.clip.timelineStart + timeInClip;
-
-      // Check if we've reached the end of the clip
-      if (video.currentTime >= clipAtPlayhead.clip.mediaOut) {
-        // Stop at end of clip (future: advance to next clip)
-        video.pause();
-        setIsPlaying(false);
-        setPlaybackDirection(0);
-        return;
-      }
-
-      dispatch(setPlayheadPosition(newPlayheadPosition));
-    };
+    // No longer use timeupdate for playback - we drive from requestAnimationFrame
+    // This is just for handling seek completion and errors
 
     const handleSeeked = () => {
       seekingRef.current = false;
+      // Draw current frame to canvas after seeking
+      if (!isPlaying) {
+        drawToCanvas(video);
+      }
     };
 
     const handleEnded = () => {
-      setIsPlaying(false);
-      setPlaybackDirection(0);
+      // Video ended naturally - don't stop timeline, let playhead continue
     };
 
     const handleError = () => {
@@ -196,20 +336,18 @@ const ProgramMonitor: React.FC = () => {
       }
     };
 
-    video.addEventListener('timeupdate', handleTimeUpdate);
     video.addEventListener('seeked', handleSeeked);
     video.addEventListener('ended', handleEnded);
     video.addEventListener('error', handleError);
     video.addEventListener('loadedmetadata', handleLoadedMetadata);
 
     return () => {
-      video.removeEventListener('timeupdate', handleTimeUpdate);
       video.removeEventListener('seeked', handleSeeked);
       video.removeEventListener('ended', handleEnded);
       video.removeEventListener('error', handleError);
       video.removeEventListener('loadedmetadata', handleLoadedMetadata);
     };
-  }, [clipAtPlayhead, isPlaying, dispatch]);
+  }, [clipAtPlayhead, isPlaying, drawToCanvas]);
 
   // Handle play state changes
   useEffect(() => {
@@ -220,44 +358,171 @@ const ProgramMonitor: React.FC = () => {
     }
   }, [isPlaying, dispatch, playingPane]);
 
-  // Handle reverse playback using requestAnimationFrame
+  // Playhead-driven forward playback
+  // Advances playhead based on wall-clock time, handles gaps between clips
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video || playbackDirection !== -1 || !clipAtPlayhead) return;
+    if (!isPlaying || playbackDirection !== 1) return;
 
-    let animationId: number;
     let lastTime = performance.now();
+    let currentPlayhead = playheadPosition; // Capture initial position, accumulate locally
+
+    const updatePlayback = (now: number) => {
+      const delta = (now - lastTime) / 1000;
+      lastTime = now;
+
+      currentPlayhead += delta * playbackSpeed; // Accumulate into local variable
+
+      // Check if we've reached end of timeline
+      if (currentPlayhead >= timelineDuration) {
+        dispatch(setPlayheadPosition(timelineDuration));
+        setIsPlaying(false);
+        setPlaybackDirection(0);
+        // Draw final frame
+        const video = videoRef.current;
+        if (video) drawToCanvas(video);
+        else clearCanvas();
+        return;
+      }
+
+      dispatch(setPlayheadPosition(currentPlayhead));
+
+      // Find clip at current playhead position and draw
+      let foundClip = false;
+      const videoTracks = tracks.filter(t => t.type === 'video');
+      for (const track of videoTracks) {
+        for (const clip of track.clips) {
+          if (!clip.enabled) continue;
+          const clipStart = clip.timelineStart;
+          const clipEnd = clip.timelineStart + clip.duration;
+          if (currentPlayhead >= clipStart && currentPlayhead < clipEnd) {
+            const mediaItem = media.find(m => m.id === clip.mediaId);
+            if (mediaItem) {
+              foundClip = true;
+              const timeInClip = currentPlayhead - clipStart;
+              const mediaTime = clip.mediaIn + timeInClip;
+
+              if (mediaItem.type === 'image') {
+                // Image - draw from imageRef
+                const img = imageRef.current;
+                if (img && img.src.includes(mediaItem.path.replace(/\\/g, '/'))) {
+                  drawToCanvas(img);
+                }
+              } else {
+                // Video - sync video element and draw
+                const video = videoRef.current;
+                if (video) {
+                  // Only seek if significantly different (avoid constant seeking)
+                  if (Math.abs(video.currentTime - mediaTime) > 0.1) {
+                    video.currentTime = mediaTime;
+                  }
+                  drawToCanvas(video);
+                }
+              }
+            }
+            break;
+          }
+        }
+        if (foundClip) break;
+      }
+
+      if (!foundClip) {
+        // No clip at playhead - show background
+        clearCanvas();
+      }
+
+      animationFrameRef.current = requestAnimationFrame(updatePlayback);
+    };
+
+    animationFrameRef.current = requestAnimationFrame(updatePlayback);
+
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+    };
+  // Note: playheadPosition is intentionally NOT in deps - we capture it once when play starts
+  // and accumulate locally. Adding it would restart the effect every frame.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPlaying, playbackDirection, playbackSpeed, timelineDuration, tracks, media, dispatch, drawToCanvas, clearCanvas]);
+
+  // Playhead-driven reverse playback
+  // Rewinds playhead based on wall-clock time, handles gaps between clips
+  useEffect(() => {
+    if (!isPlaying || playbackDirection !== -1) return;
+
+    let lastTime = performance.now();
+    let currentPlayhead = playheadPosition; // Capture initial position, accumulate locally
 
     const updateReverse = (now: number) => {
       const delta = (now - lastTime) / 1000;
       lastTime = now;
 
-      const newMediaTime = video.currentTime - delta * playbackSpeed;
+      currentPlayhead -= delta * playbackSpeed; // Accumulate (subtract for reverse)
 
-      // Check if we've reached the start of the clip
-      if (newMediaTime <= clipAtPlayhead.clip.mediaIn) {
-        video.currentTime = clipAtPlayhead.clip.mediaIn;
-        const newPlayhead = clipAtPlayhead.clip.timelineStart;
-        dispatch(setPlayheadPosition(newPlayhead));
-        setPlaybackDirection(0);
+      // Check if we've reached the start of the timeline
+      if (currentPlayhead <= 0) {
+        dispatch(setPlayheadPosition(0));
         setIsPlaying(false);
+        setPlaybackDirection(0);
+        clearCanvas();
         return;
       }
 
-      video.currentTime = newMediaTime;
-      const timeInClip = newMediaTime - clipAtPlayhead.clip.mediaIn;
-      dispatch(setPlayheadPosition(clipAtPlayhead.clip.timelineStart + timeInClip));
-      animationId = requestAnimationFrame(updateReverse);
+      dispatch(setPlayheadPosition(currentPlayhead));
+
+      // Find clip at current playhead position and draw
+      let foundClip = false;
+      const videoTracks = tracks.filter(t => t.type === 'video');
+      for (const track of videoTracks) {
+        for (const clip of track.clips) {
+          if (!clip.enabled) continue;
+          const clipStart = clip.timelineStart;
+          const clipEnd = clip.timelineStart + clip.duration;
+          if (currentPlayhead >= clipStart && currentPlayhead < clipEnd) {
+            const mediaItem = media.find(m => m.id === clip.mediaId);
+            if (mediaItem) {
+              foundClip = true;
+              const timeInClip = currentPlayhead - clipStart;
+              const mediaTime = clip.mediaIn + timeInClip;
+
+              if (mediaItem.type === 'image') {
+                const img = imageRef.current;
+                if (img && img.src.includes(mediaItem.path.replace(/\\/g, '/'))) {
+                  drawToCanvas(img);
+                }
+              } else {
+                const video = videoRef.current;
+                if (video) {
+                  video.currentTime = mediaTime;
+                  drawToCanvas(video);
+                }
+              }
+            }
+            break;
+          }
+        }
+        if (foundClip) break;
+      }
+
+      if (!foundClip) {
+        clearCanvas();
+      }
+
+      animationFrameRef.current = requestAnimationFrame(updateReverse);
     };
 
-    animationId = requestAnimationFrame(updateReverse);
+    animationFrameRef.current = requestAnimationFrame(updateReverse);
 
     return () => {
-      if (animationId) {
-        cancelAnimationFrame(animationId);
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
       }
     };
-  }, [playbackDirection, playbackSpeed, clipAtPlayhead, dispatch]);
+  // Note: playheadPosition is intentionally NOT in deps - we capture it once when play starts
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPlaying, playbackDirection, playbackSpeed, tracks, media, dispatch, drawToCanvas, clearCanvas]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -265,7 +530,6 @@ const ProgramMonitor: React.FC = () => {
 
     const handleKeyDown = (e: KeyboardEvent) => {
       const video = videoRef.current;
-      if (!video || !clipAtPlayhead) return;
 
       // Don't handle if typing in an input
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
@@ -275,13 +539,17 @@ const ProgramMonitor: React.FC = () => {
         case ' ':
           e.preventDefault();
           if (playbackDirection === 0) {
-            video.playbackRate = 1;
+            // Start playing forward
             setPlaybackSpeed(1);
             setPlaybackDirection(1);
-            video.play();
             setIsPlaying(true);
+            if (video) {
+              video.playbackRate = 1;
+              video.play();
+            }
           } else {
-            video.pause();
+            // Stop
+            if (video) video.pause();
             setIsPlaying(false);
             setPlaybackDirection(0);
           }
@@ -290,15 +558,18 @@ const ProgramMonitor: React.FC = () => {
         case 'j':
           e.preventDefault();
           if (playbackDirection === 1) {
-            video.pause();
+            // Switch from forward to reverse
+            if (video) video.pause();
             setPlaybackSpeed(PLAYBACK_SPEEDS[0]);
             setPlaybackDirection(-1);
             setIsPlaying(true);
           } else if (playbackDirection === -1) {
+            // Already reversing - speed up
             const currentIndex = PLAYBACK_SPEEDS.indexOf(playbackSpeed);
             const nextIndex = Math.min(currentIndex + 1, PLAYBACK_SPEEDS.length - 1);
             setPlaybackSpeed(PLAYBACK_SPEEDS[nextIndex]);
           } else {
+            // Start reversing
             setPlaybackSpeed(PLAYBACK_SPEEDS[0]);
             setPlaybackDirection(-1);
             setIsPlaying(true);
@@ -308,28 +579,35 @@ const ProgramMonitor: React.FC = () => {
         case 'l':
           e.preventDefault();
           if (playbackDirection === -1) {
+            // Switch from reverse to forward
             setPlaybackDirection(1);
             setPlaybackSpeed(PLAYBACK_SPEEDS[0]);
-            video.playbackRate = PLAYBACK_SPEEDS[0];
-            video.play();
             setIsPlaying(true);
+            if (video) {
+              video.playbackRate = PLAYBACK_SPEEDS[0];
+              video.play();
+            }
           } else if (playbackDirection === 1) {
+            // Already playing forward - speed up
             const currentIndex = PLAYBACK_SPEEDS.indexOf(playbackSpeed);
             const nextIndex = Math.min(currentIndex + 1, PLAYBACK_SPEEDS.length - 1);
             setPlaybackSpeed(PLAYBACK_SPEEDS[nextIndex]);
-            video.playbackRate = PLAYBACK_SPEEDS[nextIndex];
+            if (video) video.playbackRate = PLAYBACK_SPEEDS[nextIndex];
           } else {
+            // Start playing forward
             setPlaybackSpeed(PLAYBACK_SPEEDS[0]);
             setPlaybackDirection(1);
-            video.playbackRate = PLAYBACK_SPEEDS[0];
-            video.play();
             setIsPlaying(true);
+            if (video) {
+              video.playbackRate = PLAYBACK_SPEEDS[0];
+              video.play();
+            }
           }
           break;
 
         case 'arrowleft':
           e.preventDefault();
-          video.pause();
+          if (video) video.pause();
           setIsPlaying(false);
           setPlaybackDirection(0);
           {
@@ -341,7 +619,7 @@ const ProgramMonitor: React.FC = () => {
 
         case 'arrowright':
           e.preventDefault();
-          video.pause();
+          if (video) video.pause();
           setIsPlaying(false);
           setPlaybackDirection(0);
           {
@@ -353,7 +631,7 @@ const ProgramMonitor: React.FC = () => {
 
         case 'home':
           e.preventDefault();
-          video.pause();
+          if (video) video.pause();
           setIsPlaying(false);
           setPlaybackDirection(0);
           dispatch(setPlayheadPosition(0));
@@ -361,7 +639,7 @@ const ProgramMonitor: React.FC = () => {
 
         case 'end':
           e.preventDefault();
-          video.pause();
+          if (video) video.pause();
           setIsPlaying(false);
           setPlaybackDirection(0);
           dispatch(setPlayheadPosition(timelineDuration));
@@ -380,7 +658,7 @@ const ProgramMonitor: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [shouldHandleKeyboard, clipAtPlayhead, playbackDirection, playbackSpeed, fps, playheadPosition, timelineDuration, isMuted, dispatch]);
+  }, [shouldHandleKeyboard, playbackDirection, playbackSpeed, fps, playheadPosition, timelineDuration, isMuted, dispatch]);
 
   // Set active pane when clicked
   const handlePaneClick = useCallback(() => {
@@ -392,20 +670,21 @@ const ProgramMonitor: React.FC = () => {
   // Play/Pause toggle
   const handlePlayPause = useCallback(() => {
     const video = videoRef.current;
-    if (!video || !clipAtPlayhead) return;
 
     if (isPlaying) {
-      video.pause();
+      if (video) video.pause();
       setIsPlaying(false);
       setPlaybackDirection(0);
     } else {
-      video.playbackRate = 1;
       setPlaybackSpeed(1);
       setPlaybackDirection(1);
-      video.play();
       setIsPlaying(true);
+      if (video) {
+        video.playbackRate = 1;
+        video.play();
+      }
     }
-  }, [isPlaying, clipAtPlayhead]);
+  }, [isPlaying]);
 
   // Step frame forward/back
   const stepFrame = useCallback((direction: 1 | -1) => {
@@ -467,145 +746,59 @@ const ProgramMonitor: React.FC = () => {
     ? `file:///${clipAtPlayhead.media.path.replace(/\\/g, '/')}`
     : '';
 
-  // Empty state
-  if (!clipAtPlayhead) {
-    return (
-      <div className="program-monitor" onClick={handlePaneClick}>
-        <div className="program-empty">
-          <p>No clip at playhead</p>
-          <p className="hint">Add clips to the timeline and position the playhead over them</p>
-        </div>
+  const isImage = clipAtPlayhead?.media.type === 'image';
+  const hasClip = !!clipAtPlayhead;
 
-        {/* Still show transport controls */}
-        <div className="program-info-bar">
-          <span className="program-timecode">{formatTimecode(playheadPosition)}</span>
-          <span className="program-name">Program</span>
-          <span className="program-duration">{formatTimecode(timelineDuration)}</span>
-        </div>
-
-        <div className="program-scrub-container">
-          <div className="program-scrub-bar" onClick={handleScrubClick}>
-            <div className="program-playhead" style={{ left: `${playheadPercent}%` }} />
-          </div>
-        </div>
-
-        <div className="program-transport">
-          <div className="transport-left">
-            <button onClick={toggleMute} title="Mute (M)">
-              {isMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
-            </button>
-          </div>
-
-          <div className="transport-center">
-            <button onClick={goToStart} title="Go to Start (Home)">
-              <ChevronsLeft size={16} />
-            </button>
-            <button onClick={() => stepFrame(-1)} title="Step Back (Left Arrow)">
-              <SkipBack size={16} />
-            </button>
-            <button onClick={handlePlayPause} className="play-button" title="Play/Pause (Space)" disabled>
-              <Play size={20} />
-            </button>
-            <button onClick={() => stepFrame(1)} title="Step Forward (Right Arrow)">
-              <SkipForward size={16} />
-            </button>
-            <button onClick={goToEnd} title="Go to End (End)">
-              <ChevronsRight size={16} />
-            </button>
-          </div>
-
-          <div className="transport-right">
-            {playbackDirection !== 0 && (
-              <span className="playback-speed">{playbackSpeed}x</span>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const isImage = clipAtPlayhead.media.type === 'image';
-
-  // Image preview
-  if (isImage) {
-    return (
-      <div className="program-monitor" onClick={handlePaneClick}>
-        <div className="program-video-container">
-          <img
-            src={mediaSrc}
-            className="program-video"
-            alt={clipAtPlayhead.media.name}
-          />
-        </div>
-
-        <div className="program-info-bar">
-          <span className="program-timecode">{formatTimecode(playheadPosition)}</span>
-          <span className="program-name">{clipAtPlayhead.clip.name}</span>
-          <span className="program-duration">{formatTimecode(timelineDuration)}</span>
-        </div>
-
-        <div className="program-scrub-container">
-          <div className="program-scrub-bar" onClick={handleScrubClick}>
-            <div className="program-playhead" style={{ left: `${playheadPercent}%` }} />
-          </div>
-        </div>
-
-        <div className="program-transport">
-          <div className="transport-left">
-            <button onClick={toggleMute} title="Mute (M)">
-              {isMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
-            </button>
-          </div>
-
-          <div className="transport-center">
-            <button onClick={goToStart} title="Go to Start (Home)">
-              <ChevronsLeft size={16} />
-            </button>
-            <button onClick={() => stepFrame(-1)} title="Step Back (Left Arrow)">
-              <SkipBack size={16} />
-            </button>
-            <button onClick={handlePlayPause} className="play-button" title="Play/Pause (Space)">
-              {isPlaying ? <Pause size={20} /> : <Play size={20} />}
-            </button>
-            <button onClick={() => stepFrame(1)} title="Step Forward (Right Arrow)">
-              <SkipForward size={16} />
-            </button>
-            <button onClick={goToEnd} title="Go to End (End)">
-              <ChevronsRight size={16} />
-            </button>
-          </div>
-
-          <div className="transport-right">
-            {playbackDirection !== 0 && (
-              <span className="playback-speed">{playbackSpeed}x</span>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Video preview
+  // Unified canvas-based render
   return (
     <div className="program-monitor" onClick={handlePaneClick}>
-      <div className="program-video-container">
-        <video
-          ref={videoRef}
-          src={mediaSrc}
-          className="program-video"
-          muted={isMuted}
+      <div className="program-video-container" ref={containerRef}>
+        {/* Canvas for composited output at sequence resolution */}
+        <canvas
+          ref={canvasRef}
+          width={seqWidth}
+          height={seqHeight}
+          className="program-canvas"
+          style={{
+            width: canvasDisplaySize.width,
+            height: canvasDisplaySize.height,
+          }}
         />
+
+        {/* Hidden video element as source for canvas drawing */}
+        {hasClip && !isImage && (
+          <video
+            ref={videoRef}
+            src={mediaSrc}
+            className="program-hidden-source"
+            muted={isMuted}
+          />
+        )}
+
+        {/* Hidden image element as source for canvas drawing */}
+        <img
+          ref={imageRef}
+          className="program-hidden-source"
+          alt=""
+        />
+
+        {/* Error overlay */}
         {videoError && (
           <div className="program-video-error">
             <p>{videoError}</p>
             <p className="hint">This format may need to be converted before preview</p>
           </div>
         )}
+
+        {/* Resolution indicator */}
+        <div className="program-resolution-badge">
+          {fullWidth}x{fullHeight}
+        </div>
       </div>
 
       <div className="program-info-bar">
         <span className="program-timecode">{formatTimecode(playheadPosition)}</span>
-        <span className="program-name">{clipAtPlayhead.clip.name}</span>
+        <span className="program-name">{hasClip ? clipAtPlayhead.clip.name : 'Program'}</span>
         <span className="program-duration">{formatTimecode(timelineDuration)}</span>
       </div>
 
@@ -644,6 +837,17 @@ const ProgramMonitor: React.FC = () => {
           {playbackDirection !== 0 && (
             <span className="playback-speed">{playbackSpeed}x</span>
           )}
+          <span className="preview-quality-label">Quality:</span>
+          <select
+            className="preview-quality-select"
+            value={previewQuality}
+            onChange={(e) => dispatch(updateSettings({ previewQuality: parseFloat(e.target.value) }))}
+            title="Preview Quality"
+          >
+            {PREVIEW_QUALITY_OPTIONS.map(opt => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
         </div>
       </div>
     </div>

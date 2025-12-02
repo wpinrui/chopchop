@@ -19,10 +19,20 @@ export interface Project {
 }
 
 export interface ProjectSettings {
+  // Sequence/output format
   resolution: [number, number];
   frameRate: number;
+  backgroundColor: string; // hex color for gaps/letterboxing
+  sequenceInitialized: boolean; // true after first clip sets defaults
+
+  // Preview settings
+  previewQuality: number; // 1.0 = full, 0.5 = half, 0.25 = quarter resolution
+
+  // Proxy settings
   proxyEnabled: boolean;
   proxyScale: number; // 0.25, 0.5, etc.
+
+  // Audio settings
   audioSampleRate: number;
   audioChannels: number;
 }
@@ -30,6 +40,9 @@ export interface ProjectSettings {
 export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   resolution: [1920, 1080],
   frameRate: 30,
+  backgroundColor: '#000000',
+  sequenceInitialized: false,
+  previewQuality: 0.5, // Default to half resolution for better performance
   proxyEnabled: true,
   proxyScale: 0.5,
   audioSampleRate: 48000,

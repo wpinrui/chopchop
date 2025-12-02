@@ -9,6 +9,7 @@ import MediaBin, { type MediaBinHandle } from './components/MediaBin/MediaBin';
 import Timeline from './components/Timeline/Timeline';
 import SourcePreview from './components/SourcePreview/SourcePreview';
 import ProgramMonitor from './components/ProgramMonitor/ProgramMonitor';
+import SequenceSettings from './components/SequenceSettings/SequenceSettings';
 import ExportDialog from './components/ExportDialog/ExportDialog';
 import { addTrack, loadTimeline } from './store/timelineSlice';
 import { setActivePane } from './store/uiSlice';
@@ -41,14 +42,29 @@ const App: React.FC = () => {
   const mediaBinRef = useRef<MediaBinHandle>(null);
   const tracksInitialized = useRef(false);
 
+  // Default layout values
+  const DEFAULT_TOP_ROW_HEIGHT = 60;
+  const DEFAULT_TOP_LEFT_WIDTH = 50;
+  const DEFAULT_BOTTOM_LEFT_WIDTH = 30;
+
   // Layout state - Top row is 1.5x bottom row = 60% height
-  const [topRowHeight, setTopRowHeight] = useState(60); // percentage
-  const [topLeftWidth, setTopLeftWidth] = useState(50); // percentage - half/half
-  const [bottomLeftWidth, setBottomLeftWidth] = useState(30); // percentage - 3:7 ratio
+  const [topRowHeight, setTopRowHeight] = useState(DEFAULT_TOP_ROW_HEIGHT); // percentage
+  const [topLeftWidth, setTopLeftWidth] = useState(DEFAULT_TOP_LEFT_WIDTH); // percentage - half/half
+  const [bottomLeftWidth, setBottomLeftWidth] = useState(DEFAULT_BOTTOM_LEFT_WIDTH); // percentage - 3:7 ratio
+
+  // Reset layout to defaults
+  const handleResetLayout = useCallback(() => {
+    setTopRowHeight(DEFAULT_TOP_ROW_HEIGHT);
+    setTopLeftWidth(DEFAULT_TOP_LEFT_WIDTH);
+    setBottomLeftWidth(DEFAULT_BOTTOM_LEFT_WIDTH);
+    setStatusMessage('Layout reset to default');
+    setTimeout(() => setStatusMessage('Ready'), 2000);
+  }, []);
 
   // Tab states
   const [topLeftTab, setTopLeftTab] = useState<'source' | 'effects'>('source');
   const [bottomLeftTab, setBottomLeftTab] = useState<'media' | 'effects-browser' | 'markers' | 'history'>('media');
+  const [timelineTab, setTimelineTab] = useState<'timeline' | 'sequence'>('timeline');
 
   // Export dialog state
   const [showExportDialog, setShowExportDialog] = useState(false);
@@ -262,10 +278,11 @@ const App: React.FC = () => {
       window.electronAPI.menu.onRedo(() => {
         setStatusMessage('Redo (not implemented yet)');
       }),
+      window.electronAPI.menu.onResetLayout(handleResetLayout),
     ];
 
     return () => cleanups.forEach(cleanup => cleanup());
-  }, [handleOpen, handleSave, handleSaveAs, handleExport, loadProjectFromPath]);
+  }, [handleOpen, handleSave, handleSaveAs, handleExport, loadProjectFromPath, handleResetLayout]);
 
   // Handle unsaved changes check when closing
   useEffect(() => {
@@ -564,9 +581,24 @@ const App: React.FC = () => {
             className={`panel timeline-panel ${activePane === 'timeline' ? 'active' : ''}`}
             onClick={handleTimelineClick}
           >
-            <div className="panel-header">Timeline</div>
+            <div className="panel-header">
+              <div className="tab-bar">
+                <button
+                  className={`tab ${timelineTab === 'timeline' ? 'active' : ''}`}
+                  onClick={() => setTimelineTab('timeline')}
+                >
+                  Timeline
+                </button>
+                <button
+                  className={`tab ${timelineTab === 'sequence' ? 'active' : ''}`}
+                  onClick={() => setTimelineTab('sequence')}
+                >
+                  Sequence
+                </button>
+              </div>
+            </div>
             <div className="panel-content timeline-content">
-              <Timeline />
+              {timelineTab === 'timeline' ? <Timeline /> : <SequenceSettings />}
             </div>
           </div>
         </div>
