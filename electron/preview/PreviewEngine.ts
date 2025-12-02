@@ -245,11 +245,13 @@ export class PreviewEngine {
 
   /**
    * Step one frame and play its audio
+   * @param direction -1 for previous frame, 1 for next frame
+   * @param frameRate Frame rate from sequence settings (passed from renderer)
    */
-  async frameStep(direction: -1 | 1): Promise<ExtractedFrame | null> {
+  async frameStep(direction: -1 | 1, frameRate: number): Promise<ExtractedFrame | null> {
     if (!this.settings) return null;
 
-    const frameInterval = 1 / this.settings.frameRate;
+    const frameInterval = 1 / frameRate;
     this.currentTime += direction * frameInterval;
 
     // Clamp to valid range

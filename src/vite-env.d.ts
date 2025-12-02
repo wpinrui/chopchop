@@ -153,7 +153,7 @@ interface ElectronAPI {
     scrubEnd: () => Promise<{ success: boolean }>;
 
     // Frame stepping (for accurate cutting)
-    frameStep: (direction: -1 | 1) => Promise<{
+    frameStep: (direction: -1 | 1, frameRate: number) => Promise<{
       success: boolean;
       time?: number;
       width?: number;

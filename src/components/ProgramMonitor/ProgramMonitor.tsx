@@ -253,7 +253,8 @@ const ProgramMonitor: React.FC = () => {
     }
 
     // Use hybrid preview frame step (includes audio)
-    const frame = await previewActions.frameStep(direction);
+    // Pass fps from sequence settings so frame stepping uses the correct frame rate
+    const frame = await previewActions.frameStep(direction, fps);
 
     if (frame && frame.success && frame.data) {
       renderFrame(frame);

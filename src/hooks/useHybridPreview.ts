@@ -58,7 +58,7 @@ export interface HybridPreviewActions {
   endScrub: () => Promise<void>;
 
   // Frame stepping
-  frameStep: (direction: -1 | 1) => Promise<ExtractedFrame | null>;
+  frameStep: (direction: -1 | 1, frameRate: number) => Promise<ExtractedFrame | null>;
 
   // Playback info
   getPlaybackInfo: (time: number) => Promise<{
@@ -316,11 +316,11 @@ export function useHybridPreview(): [HybridPreviewState, HybridPreviewActions] {
 
   // Frame step
   const frameStep = useCallback(
-    async (direction: -1 | 1): Promise<ExtractedFrame | null> => {
+    async (direction: -1 | 1, frameRate: number): Promise<ExtractedFrame | null> => {
       if (!window.electronAPI) return null;
 
       try {
-        const result = await window.electronAPI.preview.frameStep(direction);
+        const result = await window.electronAPI.preview.frameStep(direction, frameRate);
         if (result.success) {
           setLastExtractedFrame(result);
           return result;

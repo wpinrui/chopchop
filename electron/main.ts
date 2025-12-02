@@ -812,10 +812,10 @@ function registerIPCHandlers() {
   });
 
   // Step one frame
-  ipcMain.handle('preview:frameStep', async (_event, direction: -1 | 1) => {
+  ipcMain.handle('preview:frameStep', async (_event, { direction, frameRate }: { direction: -1 | 1; frameRate: number }) => {
     try {
       const engine = getPreviewEngine();
-      const frame = await engine.frameStep(direction);
+      const frame = await engine.frameStep(direction, frameRate);
 
       if (frame) {
         return {

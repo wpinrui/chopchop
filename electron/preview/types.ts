@@ -196,7 +196,7 @@ export interface PreviewIPCMessages {
   'preview:scrubStart': { time: number };
   'preview:scrubUpdate': { time: number; velocity: number };
   'preview:scrubEnd': void;
-  'preview:frameStep': { direction: -1 | 1 };
+  'preview:frameStep': { direction: -1 | 1; frameRate: number };
   'preview:extractFrame': { time: number };
   'preview:invalidate': { startTime: number; endTime: number };
   'preview:clearCache': void;

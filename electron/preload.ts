@@ -152,7 +152,8 @@ const electronAPI = {
     scrubEnd: () => ipcRenderer.invoke('preview:scrubEnd'),
 
     // Frame stepping (for accurate cutting)
-    frameStep: (direction: -1 | 1) => ipcRenderer.invoke('preview:frameStep', direction),
+    frameStep: (direction: -1 | 1, frameRate: number) =>
+      ipcRenderer.invoke('preview:frameStep', { direction, frameRate }),
 
     // Get playback info (realtime vs cached chunk)
     getPlaybackInfo: (time: number) => ipcRenderer.invoke('preview:getPlaybackInfo', time),
