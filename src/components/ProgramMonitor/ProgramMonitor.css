@@ -291,3 +291,116 @@
 .preview-quality-select:focus {
   border-color: var(--accent-blue);
 }
+
+/* Loading overlay */
+.program-loading-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.program-loading-dialog {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 32px;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  text-align: center;
+}
+
+.program-loading-dialog p {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.program-loading-dialog .loading-progress-text {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.loading-spinner {
+  animation: spin 1s linear infinite;
+  color: var(--accent-blue);
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.loading-progress-bar {
+  width: 200px;
+  height: 6px;
+  background-color: var(--bg-tertiary);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.loading-progress-fill {
+  height: 100%;
+  background-color: var(--accent-blue);
+  transition: width 0.2s ease-out;
+}
+
+.loading-cancel-btn {
+  padding: 6px 16px;
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.loading-cancel-btn:hover {
+  background-color: var(--bg-hover);
+  border-color: var(--border-light);
+  color: var(--text-primary);
+}
+
+/* Render status indicator */
+.render-status {
+  font-size: 10px;
+  color: var(--accent-blue);
+  font-family: 'Consolas', 'Monaco', monospace;
+  padding: 2px 6px;
+  background-color: rgba(52, 152, 219, 0.15);
+  border-radius: 3px;
+  margin-right: 4px;
+}
+
+/* Chunk playback toggle */
+.chunk-toggle {
+  padding: 2px 6px;
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-right: 4px;
+}
+
+.chunk-toggle:hover {
+  border-color: var(--border-light);
+  color: var(--text-primary);
+}
+
+.chunk-toggle.active {
+  background-color: rgba(52, 152, 219, 0.2);
+  border-color: rgba(52, 152, 219, 0.5);
+  color: rgb(52, 152, 219);
+}

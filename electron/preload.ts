@@ -67,6 +67,42 @@ const electronAPI = {
     },
   },
 
+  // Preview chunk rendering
+  preview: {
+    renderChunk: (options: {
+      chunkId: string;
+      startTime: number;
+      endTime: number;
+      timeline: any;
+      media: any[];
+      settings: any;
+      useProxies: boolean;
+    }) => ipcRenderer.invoke('preview:renderChunk', options),
+    cancelChunk: (chunkId: string) => ipcRenderer.invoke('preview:cancelChunk', chunkId),
+    cancelAllChunks: () => ipcRenderer.invoke('preview:cancelAllChunks'),
+    clearCache: () => ipcRenderer.invoke('preview:clearCache'),
+    getChunkDir: () => ipcRenderer.invoke('preview:getChunkDir'),
+    onChunkProgress: (callback: (progress: { chunkId: string; percent: number; fps?: number }) => void) => {
+      const handler = (_event: any, progress: any) => callback(progress);
+      ipcRenderer.on('preview:chunkProgress', handler);
+      return () => ipcRenderer.removeListener('preview:chunkProgress', handler);
+    },
+    // Full timeline preview (simpler single-file approach)
+    renderFullPreview: (options: {
+      timeline: any;
+      media: any[];
+      settings: any;
+      duration: number;
+      useProxies: boolean;
+    }) => ipcRenderer.invoke('preview:renderFullPreview', options),
+    cancelPreview: () => ipcRenderer.invoke('preview:cancelPreview'),
+    onPreviewProgress: (callback: (progress: { percent: number; fps?: number }) => void) => {
+      const handler = (_event: any, progress: any) => callback(progress);
+      ipcRenderer.on('preview:previewProgress', handler);
+      return () => ipcRenderer.removeListener('preview:previewProgress', handler);
+    },
+  },
+
   // App settings
   settings: {
     setRecentProject: (projectPath: string | null) =>

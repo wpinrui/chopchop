@@ -17,6 +17,7 @@ import {
   ChevronsRight,
   Volume2,
   VolumeX,
+  Loader,
 } from 'lucide-react';
 import type { RootState } from '../../store';
 import { setPlayheadPosition } from '../../store/timelineSlice';
@@ -69,6 +70,13 @@ const ProgramMonitor: React.FC = () => {
   const backgroundColor = useSelector((state: RootState) => state.project.settings.backgroundColor);
   const previewQuality = useSelector((state: RootState) => state.project.settings.previewQuality) ?? 1;
   const proxyEnabled = useSelector((state: RootState) => state.project.settings.proxyEnabled);
+
+  // Single preview file state
+  const preview = useSelector((state: RootState) => state.preview.preview);
+  const previewReady = preview.status === 'ready';
+  const previewRendering = preview.status === 'rendering';
+  const renderProgress = preview.progress;
+
   const [fullWidth, fullHeight] = sequenceResolution;
   // Apply preview quality scaling - canvas renders at reduced resolution
   const seqWidth = Math.round(fullWidth * previewQuality);
@@ -88,6 +96,11 @@ const ProgramMonitor: React.FC = () => {
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [playbackDirection, setPlaybackDirection] = useState<-1 | 0 | 1>(0);
   const [videoError, setVideoError] = useState<string | null>(null);
+  const [showLoadingDialog, setShowLoadingDialog] = useState(false);
+  const [usePreviewPlayback, setUsePreviewPlayback] = useState(true);
+
+  // Ref for preview video element (single low-bitrate preview file)
+  const previewVideoRef = useRef<HTMLVideoElement>(null);
 
   // Track which clip we're currently showing to avoid re-seeking unnecessarily
   const currentClipRef = useRef<string | null>(null);
@@ -381,6 +394,7 @@ const ProgramMonitor: React.FC = () => {
 
   // Playhead-driven forward playback
   // Advances playhead based on wall-clock time, handles gaps between clips
+  // When usePreviewPlayback is true, draws from pre-rendered preview video
   useEffect(() => {
     if (!isPlaying || playbackDirection !== 1) return;
 
@@ -399,15 +413,31 @@ const ProgramMonitor: React.FC = () => {
         setIsPlaying(false);
         setPlaybackDirection(0);
         // Draw final frame
-        const video = videoRef.current;
-        if (video) drawToCanvas(video);
-        else clearCanvas();
+        if (usePreviewPlayback && previewReady && previewVideoRef.current) {
+          drawToCanvas(previewVideoRef.current);
+        } else {
+          const video = videoRef.current;
+          if (video) drawToCanvas(video);
+          else clearCanvas();
+        }
         return;
       }
 
       dispatch(setPlayheadPosition(currentPlayhead));
 
-      // Find clip at current playhead position and draw
+      // If using pre-rendered preview, draw from that instead of individual clips
+      if (usePreviewPlayback && previewReady && previewVideoRef.current) {
+        const previewVideo = previewVideoRef.current;
+        // Sync preview video time with playhead (it should be playing, but ensure sync)
+        if (Math.abs(previewVideo.currentTime - currentPlayhead) > 0.2) {
+          previewVideo.currentTime = currentPlayhead;
+        }
+        drawToCanvas(previewVideo);
+        animationFrameRef.current = requestAnimationFrame(updatePlayback);
+        return;
+      }
+
+      // Legacy mode: Find clip at current playhead position and draw
       let foundClip = false;
       const videoTracks = tracks.filter(t => t.type === 'video');
       for (const track of videoTracks) {
@@ -465,10 +495,11 @@ const ProgramMonitor: React.FC = () => {
   // Note: playheadPosition is intentionally NOT in deps - we capture it once when play starts
   // and accumulate locally. Adding it would restart the effect every frame.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlaying, playbackDirection, playbackSpeed, timelineDuration, tracks, media, dispatch, drawToCanvas, clearCanvas]);
+  }, [isPlaying, playbackDirection, playbackSpeed, timelineDuration, tracks, media, dispatch, drawToCanvas, clearCanvas, usePreviewPlayback, previewReady]);
 
   // Playhead-driven reverse playback
   // Rewinds playhead based on wall-clock time, handles gaps between clips
+  // When usePreviewPlayback is true, draws from pre-rendered preview video
   useEffect(() => {
     if (!isPlaying || playbackDirection !== -1) return;
 
@@ -492,7 +523,17 @@ const ProgramMonitor: React.FC = () => {
 
       dispatch(setPlayheadPosition(currentPlayhead));
 
-      // Find clip at current playhead position and draw
+      // If using pre-rendered preview, draw from that instead of individual clips
+      if (usePreviewPlayback && previewReady && previewVideoRef.current) {
+        const previewVideo = previewVideoRef.current;
+        // Seek preview video to current playhead position
+        previewVideo.currentTime = currentPlayhead;
+        drawToCanvas(previewVideo);
+        animationFrameRef.current = requestAnimationFrame(updateReverse);
+        return;
+      }
+
+      // Legacy mode: Find clip at current playhead position and draw
       let foundClip = false;
       const videoTracks = tracks.filter(t => t.type === 'video');
       for (const track of videoTracks) {
@@ -543,7 +584,7 @@ const ProgramMonitor: React.FC = () => {
     };
   // Note: playheadPosition is intentionally NOT in deps - we capture it once when play starts
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlaying, playbackDirection, playbackSpeed, tracks, media, dispatch, drawToCanvas, clearCanvas]);
+  }, [isPlaying, playbackDirection, playbackSpeed, tracks, media, dispatch, drawToCanvas, clearCanvas, usePreviewPlayback, previewReady]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -690,22 +731,42 @@ const ProgramMonitor: React.FC = () => {
 
   // Play/Pause toggle
   const handlePlayPause = useCallback(() => {
-    const video = videoRef.current;
-
     if (isPlaying) {
+      // Stop playback
+      const video = usePreviewPlayback ? previewVideoRef.current : videoRef.current;
       if (video) video.pause();
       setIsPlaying(false);
       setPlaybackDirection(0);
     } else {
+      // Check if preview is ready for preview-based playback
+      if (usePreviewPlayback && !previewReady) {
+        // Show loading dialog - preview not ready
+        setShowLoadingDialog(true);
+        return;
+      }
+
+      // Start playback
       setPlaybackSpeed(1);
       setPlaybackDirection(1);
       setIsPlaying(true);
-      if (video) {
-        video.playbackRate = 1;
-        video.play();
+
+      if (usePreviewPlayback && preview.filePath) {
+        const previewVideo = previewVideoRef.current;
+        if (previewVideo) {
+          // Seek to current playhead position
+          previewVideo.currentTime = playheadPosition;
+          previewVideo.playbackRate = 1;
+          previewVideo.play();
+        }
+      } else {
+        const video = videoRef.current;
+        if (video) {
+          video.playbackRate = 1;
+          video.play();
+        }
       }
     }
-  }, [isPlaying]);
+  }, [isPlaying, usePreviewPlayback, previewReady, preview.filePath, playheadPosition]);
 
   // Step frame forward/back
   const stepFrame = useCallback((direction: 1 | -1) => {
@@ -742,6 +803,31 @@ const ProgramMonitor: React.FC = () => {
     }
     setIsMuted(!isMuted);
   }, [isMuted]);
+
+  // Cancel loading dialog
+  const handleCancelLoading = useCallback(() => {
+    setShowLoadingDialog(false);
+  }, []);
+
+  // Auto-start playback when preview becomes ready (if loading dialog is showing)
+  useEffect(() => {
+    if (showLoadingDialog && previewReady) {
+      setShowLoadingDialog(false);
+      // Start playback
+      setPlaybackSpeed(1);
+      setPlaybackDirection(1);
+      setIsPlaying(true);
+
+      if (usePreviewPlayback && preview.filePath) {
+        const previewVideo = previewVideoRef.current;
+        if (previewVideo) {
+          previewVideo.currentTime = playheadPosition;
+          previewVideo.playbackRate = 1;
+          previewVideo.play();
+        }
+      }
+    }
+  }, [showLoadingDialog, previewReady, usePreviewPlayback, preview.filePath, playheadPosition]);
 
   // Calculate playhead percentage for scrub bar
   const playheadPercent = timelineDuration > 0 ? (playheadPosition / timelineDuration) * 100 : 0;
@@ -780,6 +866,11 @@ const ProgramMonitor: React.FC = () => {
   const isImage = clipAtPlayhead?.media.type === 'image';
   const hasClip = !!clipAtPlayhead;
 
+  // Preview video source (single low-bitrate preview of entire timeline)
+  const previewSrc = preview.filePath
+    ? `file:///${preview.filePath.replace(/\\/g, '/')}`
+    : '';
+
   // Unified canvas-based render
   return (
     <div className="program-monitor" onClick={handlePaneClick}>
@@ -797,8 +888,10 @@ const ProgramMonitor: React.FC = () => {
         />
 
         {/* Hidden video element as source for canvas drawing */}
+        {/* Key forces element recreation when source changes, preventing buffer conflicts */}
         {hasClip && !isImage && (
           <video
+            key={mediaSrc}
             ref={videoRef}
             src={mediaSrc}
             className="program-hidden-source"
@@ -812,6 +905,37 @@ const ProgramMonitor: React.FC = () => {
           className="program-hidden-source"
           alt=""
         />
+
+        {/* Hidden preview video element for pre-rendered timeline playback */}
+        {previewSrc && (
+          <video
+            key={previewSrc}
+            ref={previewVideoRef}
+            src={previewSrc}
+            className="program-hidden-source"
+            muted={isMuted}
+          />
+        )}
+
+        {/* Loading dialog overlay */}
+        {showLoadingDialog && (
+          <div className="program-loading-overlay">
+            <div className="program-loading-dialog">
+              <Loader className="loading-spinner" size={32} />
+              <p>Rendering preview...</p>
+              <div className="loading-progress-bar">
+                <div
+                  className="loading-progress-fill"
+                  style={{ width: `${renderProgress}%` }}
+                />
+              </div>
+              <p className="loading-progress-text">{renderProgress}% complete</p>
+              <button onClick={handleCancelLoading} className="loading-cancel-btn">
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Error overlay */}
         {videoError && (
@@ -868,6 +992,20 @@ const ProgramMonitor: React.FC = () => {
           {playbackDirection !== 0 && (
             <span className="playback-speed">{playbackSpeed}x</span>
           )}
+          {/* Render status indicator */}
+          {previewRendering && (
+            <span className="render-status" title="Background rendering in progress">
+              {renderProgress}%
+            </span>
+          )}
+          {/* Preview playback toggle */}
+          <button
+            className={`chunk-toggle ${usePreviewPlayback ? 'active' : ''}`}
+            onClick={() => setUsePreviewPlayback(!usePreviewPlayback)}
+            title={usePreviewPlayback ? 'Using pre-rendered preview (composited)' : 'Using individual clips (legacy mode)'}
+          >
+            {usePreviewPlayback ? 'Render' : 'Live'}
+          </button>
           <button
             className={`proxy-toggle ${proxyEnabled ? 'active' : ''}`}
             onClick={() => dispatch(updateSettings({ proxyEnabled: !proxyEnabled }))}

@@ -60,6 +60,33 @@ interface ElectronAPI {
     onProgress: (callback: (progress: ExportProgress) => void) => () => void;
   };
 
+  preview: {
+    renderChunk: (options: {
+      chunkId: string;
+      startTime: number;
+      endTime: number;
+      timeline: any;
+      media: any[];
+      settings: any;
+      useProxies: boolean;
+    }) => Promise<{ success: boolean; chunkId: string; filePath: string | null; error?: string }>;
+    cancelChunk: (chunkId: string) => Promise<boolean>;
+    cancelAllChunks: () => Promise<void>;
+    clearCache: () => Promise<void>;
+    getChunkDir: () => Promise<string>;
+    onChunkProgress: (callback: (progress: { chunkId: string; percent: number; fps?: number }) => void) => () => void;
+    // Full timeline preview (simpler single-file approach)
+    renderFullPreview: (options: {
+      timeline: any;
+      media: any[];
+      settings: any;
+      duration: number;
+      useProxies: boolean;
+    }) => Promise<{ success: boolean; filePath: string | null; error?: string }>;
+    cancelPreview: () => Promise<void>;
+    onPreviewProgress: (callback: (progress: { percent: number; fps?: number }) => void) => () => void;
+  };
+
   settings: {
     setRecentProject: (projectPath: string | null) => Promise<void>;
     getRecentProject: () => Promise<string | null>;

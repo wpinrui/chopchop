@@ -343,6 +343,15 @@ export interface PreviewState {
   chunks: ChunkStatus[];
   proxyMode: boolean;
   renderQueue: RenderJob[];
+  // Single preview file state (simpler than chunk-based)
+  preview: PreviewFile;
+}
+
+export interface PreviewFile {
+  status: 'idle' | 'rendering' | 'ready' | 'stale' | 'error';
+  filePath: string | null;
+  progress: number; // 0-100
+  error: string | null;
 }
 
 export interface ChunkStatus {

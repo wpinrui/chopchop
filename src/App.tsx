@@ -12,6 +12,7 @@ import ProgramMonitor from './components/ProgramMonitor/ProgramMonitor';
 import SequenceSettings from './components/SequenceSettings/SequenceSettings';
 import ExportDialog from './components/ExportDialog/ExportDialog';
 import ProxyProgressIndicator from './components/ProxyProgressIndicator/ProxyProgressIndicator';
+import { usePreviewRenderer } from './hooks/usePreviewRenderer';
 import { addTrack, loadTimeline } from './store/timelineSlice';
 import { setActivePane } from './store/uiSlice';
 import { loadProject, setProjectPath, markClean, updateMediaItem } from './store/projectSlice';
@@ -32,6 +33,10 @@ interface ProjectFile {
 
 const App: React.FC = () => {
   const dispatch = useDispatch();
+
+  // Initialize background preview renderer
+  usePreviewRenderer();
+
   const project = useSelector((state: RootState) => state.project);
   const timeline = useSelector((state: RootState) => state.timeline);
   const projectName = project.name;

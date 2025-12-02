@@ -9,6 +9,7 @@ import path from 'node:path';
 import { probeMediaFile, getMediaDuration, generateThumbnail, getMediaType, generateWaveformData } from './ffmpeg/probe';
 import { checkFFmpegAvailable, getFFmpegVersion, checkNvencAvailable, generateProxy, cancelProxyGeneration } from './ffmpeg/runner';
 import { exportTimeline, cancelExport, type ExportProgress } from './ffmpeg/exporter';
+import { renderChunk, cancelChunkRender, cancelAllChunkRenders, getChunkOutputDir, clearChunkCache, renderFullPreview, cancelPreviewRender } from './ffmpeg/chunkRenderer';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 
@@ -566,6 +567,72 @@ function registerIPCHandlers() {
       case 1: return 'discard';
       default: return 'cancel';
     }
+  });
+
+  // Preview chunk rendering
+  ipcMain.handle('preview:renderChunk', async (
+    _event,
+    options: {
+      chunkId: string;
+      startTime: number;
+      endTime: number;
+      timeline: any;
+      media: any[];
+      settings: any;
+      useProxies: boolean;
+    }
+  ) => {
+    const outputDir = getChunkOutputDir();
+
+    const onProgress = (progress: { chunkId: string; percent: number; fps?: number }) => {
+      mainWindow?.webContents.send('preview:chunkProgress', progress);
+    };
+
+    return await renderChunk(
+      {
+        ...options,
+        outputDir,
+      },
+      onProgress
+    );
+  });
+
+  ipcMain.handle('preview:cancelChunk', async (_event, chunkId: string) => {
+    return cancelChunkRender(chunkId);
+  });
+
+  ipcMain.handle('preview:cancelAllChunks', async () => {
+    cancelAllChunkRenders();
+  });
+
+  ipcMain.handle('preview:clearCache', async () => {
+    await clearChunkCache();
+  });
+
+  ipcMain.handle('preview:getChunkDir', async () => {
+    return getChunkOutputDir();
+  });
+
+  // Full timeline preview rendering (simpler single-file approach)
+  ipcMain.handle('preview:renderFullPreview', async (
+    _event,
+    options: {
+      timeline: any;
+      media: any[];
+      settings: any;
+      duration: number;
+      useProxies: boolean;
+    }
+  ) => {
+    const onProgress = (progress: { percent: number; fps?: number }) => {
+      mainWindow?.webContents.send('preview:previewProgress', progress);
+    };
+
+    return await renderFullPreview(options, onProgress);
+  });
+
+  ipcMain.handle('preview:cancelPreview', async () => {
+    cancelPreviewRender();
   });
 }
 
