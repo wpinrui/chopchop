@@ -13,8 +13,8 @@ import { renderChunk, cancelChunkRender, cancelAllChunkRenders, getChunkOutputDi
 import fs from 'node:fs/promises';
 import os from 'node:os';
 
-// App settings file path
-const settingsPath = path.join(app.getPath('userData'), 'settings.json');
+// App settings file path (lazy-initialized after app is ready)
+const getSettingsPath = () => path.join(app.getPath('userData'), 'settings.json');
 
 // App settings interface
 interface AppSettings {
@@ -25,7 +25,7 @@ interface AppSettings {
 // Load app settings
 async function loadSettings(): Promise<AppSettings> {
   try {
-    const data = await fs.readFile(settingsPath, 'utf-8');
+    const data = await fs.readFile(getSettingsPath(), 'utf-8');
     return JSON.parse(data);
   } catch {
     return { recentProject: null };
@@ -34,7 +34,7 @@ async function loadSettings(): Promise<AppSettings> {
 
 // Save app settings
 async function saveSettings(settings: AppSettings): Promise<void> {
-  await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+  await fs.writeFile(getSettingsPath(), JSON.stringify(settings, null, 2), 'utf-8');
 }
 
 // Track if we're force quitting (to bypass unsaved changes dialog)

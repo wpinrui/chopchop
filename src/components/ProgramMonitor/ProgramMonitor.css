@@ -69,6 +69,37 @@
   object-fit: contain;
 }
 
+/* Canvas overlay - transparent layer above video for UI elements */
+/* (markers, safe zones, waveforms - future features) */
+.program-canvas-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+/* Preview not ready indicator (non-blocking) */
+.program-preview-not-ready {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  padding: 4px 8px;
+  background-color: rgba(0, 0, 0, 0.7);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.program-preview-not-ready .render-progress {
+  font-size: 10px;
+  color: var(--accent-blue);
+  font-family: 'Consolas', 'Monaco', monospace;
+}
+
 /* Resolution badge */
 .program-resolution-badge {
   position: absolute;

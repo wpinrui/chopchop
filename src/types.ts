@@ -347,6 +347,43 @@ export interface PreviewState {
   preview: PreviewFile;
 }
 
+// =============================================================================
+// PLAYBACK MODES (Hybrid Architecture)
+// =============================================================================
+
+/**
+ * Playback modes for the Program Monitor hybrid architecture.
+ * - native-preview: Uses video.play() for continuous playback (best performance)
+ * - driven-preview: Uses RAF loop to drive video.currentTime (for scrubbing, stepping, reverse)
+ */
+export type PlaybackMode = 'native-preview' | 'driven-preview';
+
+/**
+ * High-frequency playback state stored in refs (not React state).
+ * Updated 60fps during playback without causing re-renders.
+ */
+export interface PlaybackStateRef {
+  // Playback control
+  isPlaying: boolean;
+  playheadTime: number;           // Updated every frame (60Hz)
+  playbackSpeed: number;          // 0.5, 1, 2, 4
+  direction: -1 | 0 | 1;          // reverse, stop, forward
+
+  // RAF coordination
+  rafHandle: number | null;
+  lastFrameTime: number;
+
+  // Redux sync throttling
+  lastReduxSyncTime: number;
+
+  // Mode
+  mode: PlaybackMode;
+
+  // Scrub state
+  isScrubbing: boolean;
+  wasPlayingBeforeScrub: boolean;
+}
+
 export interface PreviewFile {
   status: 'idle' | 'rendering' | 'ready' | 'stale' | 'error';
   filePath: string | null;
