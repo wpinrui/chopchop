@@ -8,9 +8,11 @@ import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import type { UIState, Tool, InspectorTab, PanelLayout } from '@types';
 
 type ActivePane = 'source' | 'program' | 'timeline' | 'mediaBin';
+type PlayingPane = 'source' | 'program' | null;
 
 interface ExtendedUIState extends UIState {
   activePane: ActivePane;
+  playingPane: PlayingPane; // Which player is currently playing (for keyboard routing)
   sourceMediaId: string | null;
   sourceInPoint: number | null;
   sourceOutPoint: number | null;
@@ -27,6 +29,7 @@ const initialState: ExtendedUIState = {
   commandCrafterOpen: false,
   inspectorTab: 'clip',
   activePane: 'timeline',
+  playingPane: null,
   sourceMediaId: null,
   sourceInPoint: null,
   sourceOutPoint: null,
@@ -103,6 +106,11 @@ const uiSlice = createSlice({
     setActivePane: (state, action: PayloadAction<ActivePane>) => {
       state.activePane = action.payload;
     },
+
+    // Playing pane - tracks which player is currently playing for keyboard routing
+    setPlayingPane: (state, action: PayloadAction<PlayingPane>) => {
+      state.playingPane = action.payload;
+    },
   },
 });
 
@@ -121,8 +129,9 @@ export const {
   setSourceInPoint,
   setSourceOutPoint,
   setActivePane,
+  setPlayingPane,
 } = uiSlice.actions;
 
-export type { ActivePane };
+export type { ActivePane, PlayingPane };
 
 export default uiSlice.reducer;

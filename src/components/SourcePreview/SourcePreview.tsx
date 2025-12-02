@@ -17,11 +17,10 @@ import {
   Scissors,
   Film,
   Music,
-  Link2,
   Image,
 } from 'lucide-react';
 import type { RootState } from '../../store';
-import { setSourceInPoint, setSourceOutPoint, setActivePane } from '../../store/uiSlice';
+import { setSourceInPoint, setSourceOutPoint, setActivePane, setPlayingPane } from '../../store/uiSlice';
 import './SourcePreview.css';
 
 // Playback speeds for J/L shuttle control
@@ -36,11 +35,17 @@ const SourcePreview: React.FC = () => {
   const sourceInPoint = useSelector((state: RootState) => state.ui.sourceInPoint);
   const sourceOutPoint = useSelector((state: RootState) => state.ui.sourceOutPoint);
   const activePane = useSelector((state: RootState) => state.ui.activePane);
+  const playingPane = useSelector((state: RootState) => state.ui.playingPane);
   const media = useSelector((state: RootState) => state.project.media);
   const fps = useSelector((state: RootState) => state.project.settings.frameRate);
 
   const sourceMedia = media.find((m) => m.id === sourceMediaId) || null;
   const isActive = activePane === 'source';
+
+  // This pane should receive keyboard shortcuts if:
+  // 1. It's currently playing (playingPane === 'source'), OR
+  // 2. No player is playing AND this is the active pane
+  const shouldHandleKeyboard = playingPane === 'source' || (playingPane === null && isActive);
 
   // Local state
   const [isPlaying, setIsPlaying] = useState(false);
@@ -132,6 +137,18 @@ const SourcePreview: React.FC = () => {
     }
   }, [sourceMediaId, sourceMedia]);
 
+  // Sync isPlaying state with Redux playingPane for keyboard routing
+  useEffect(() => {
+    if (isPlaying) {
+      dispatch(setPlayingPane('source'));
+    } else {
+      // Only clear playingPane if we were the ones playing
+      if (playingPane === 'source') {
+        dispatch(setPlayingPane(null));
+      }
+    }
+  }, [isPlaying, dispatch, playingPane]);
+
   // Handle reverse playback using requestAnimationFrame (HTML5 video doesn't support negative playbackRate)
   useEffect(() => {
     const video = videoRef.current;
@@ -167,9 +184,9 @@ const SourcePreview: React.FC = () => {
     };
   }, [playbackDirection, playbackSpeed]);
 
-  // Keyboard shortcuts when this pane is active
+  // Keyboard shortcuts - route based on playingPane or activePane
   useEffect(() => {
-    if (!isActive) return;
+    if (!shouldHandleKeyboard) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       const video = videoRef.current;
@@ -190,11 +207,22 @@ const SourcePreview: React.FC = () => {
           break;
 
         case 'k':
-          // Pause
+        case ' ':
+          // Toggle play/pause - if paused, play at 1x; if playing, pause
           e.preventDefault();
-          video.pause();
-          setIsPlaying(false);
-          setPlaybackDirection(0);
+          if (playbackDirection === 0) {
+            // Was paused, play forward at 1x
+            video.playbackRate = 1;
+            setPlaybackSpeed(1);
+            setPlaybackDirection(1);
+            video.play();
+            setIsPlaying(true);
+          } else {
+            // Was playing, pause
+            video.pause();
+            setIsPlaying(false);
+            setPlaybackDirection(0);
+          }
           break;
 
         case 'j':
@@ -277,7 +305,7 @@ const SourcePreview: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isActive, sourceMedia, playbackDirection, playbackSpeed, fps, duration, dispatch]);
+  }, [shouldHandleKeyboard, sourceMedia, playbackDirection, playbackSpeed, fps, duration, dispatch]);
 
   // Set this pane as active when clicked
   const handlePaneClick = useCallback(() => {
@@ -460,13 +488,14 @@ const SourcePreview: React.FC = () => {
   // Render video/audio preview with full transport controls
   return (
     <div className="source-preview" onClick={handlePaneClick}>
-      {/* Video display */}
+      {/* Video display - draggable to add both video+audio to timeline */}
       <div className="source-video-container">
         <video
           ref={videoRef}
           src={mediaSrc}
           className="source-video"
-          onClick={handlePlayPause}
+          draggable
+          onDragStart={(e) => handleDragStart(e, 'both')}
         />
         {videoError && (
           <div className="source-video-error">
@@ -553,14 +582,6 @@ const SourcePreview: React.FC = () => {
             title="Drag Audio Only"
           >
             <Music size={14} />
-          </button>
-          <button
-            draggable
-            onDragStart={(e) => handleDragStart(e, 'both')}
-            title="Drag Video + Audio"
-            disabled={sourceMedia.type === 'audio'}
-          >
-            <Link2 size={14} />
           </button>
         </div>
       </div>

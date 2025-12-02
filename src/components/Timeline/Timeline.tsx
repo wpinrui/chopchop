@@ -6,17 +6,20 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
-import { Magnet, ZoomIn, ZoomOut } from 'lucide-react';
+import { Magnet, ZoomIn, ZoomOut, Link } from 'lucide-react';
 import type { RootState } from '../../store';
-import { setPlayheadPosition, addClip, updateClip } from '../../store/timelineSlice';
-import type { MediaItem, Clip } from '@types';
+import { setPlayheadPosition, addClip, updateClip, unlinkClips, linkClips } from '../../store/timelineSlice';
+import { selectClip, addToSelection, removeFromSelection, clearSelection } from '../../store/uiSlice';
+import type { Clip } from '@types';
 import './Timeline.css';
 
 const Timeline: React.FC = () => {
   const dispatch = useDispatch();
   const tracks = useSelector((state: RootState) => state.timeline.tracks);
   const playhead = useSelector((state: RootState) => state.timeline.playheadPosition);
-  const fps = useSelector((state: RootState) => state.project.fps);
+  const fps = useSelector((state: RootState) => state.project.settings.frameRate);
+  const media = useSelector((state: RootState) => state.project.media);
+  const selectedClipIds = useSelector((state: RootState) => state.ui.selectedClipIds);
 
   const timelineRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -76,7 +79,7 @@ const Timeline: React.FC = () => {
 
   const rulerInterval = getRulerInterval();
 
-  // Handle timeline click to move playhead
+  // Handle timeline click to move playhead and clear selection
   const handleTimelineClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     // Skip if we just finished dragging a clip
     if (justFinishedDraggingRef.current) {
@@ -92,7 +95,12 @@ const Timeline: React.FC = () => {
     const newTime = Math.max(0, clickX / (basePixelsPerSecond * zoom));
 
     dispatch(setPlayheadPosition(newTime));
-  }, [dispatch, zoom]);
+
+    // Clear selection when clicking on empty timeline space
+    if (selectedClipIds.length > 0) {
+      dispatch(clearSelection());
+    }
+  }, [dispatch, zoom, selectedClipIds]);
 
   // Scrub playhead (shared by playhead drag and ruler click)
   const startPlayheadScrub = useCallback((e: React.MouseEvent) => {
@@ -151,16 +159,28 @@ const Timeline: React.FC = () => {
     document.addEventListener('mouseup', onMouseUp);
   }, [dispatch, zoom]);
 
-  // Handle drop from MediaBin
+  // Handle drop from SourcePreview
   const handleTrackDrop = useCallback((e: React.DragEvent, trackId: string) => {
     e.preventDefault();
     e.stopPropagation();
 
-    const mediaData = e.dataTransfer.getData('application/chopchop-media');
-    if (!mediaData) return;
+    const sourceData = e.dataTransfer.getData('application/chopchop-source');
+    if (!sourceData) return;
 
     try {
-      const mediaItem: MediaItem = JSON.parse(mediaData);
+      const { mediaId, type, inPoint, outPoint } = JSON.parse(sourceData) as {
+        mediaId: string;
+        type: 'video' | 'audio' | 'both';
+        inPoint: number;
+        outPoint: number;
+      };
+
+      // Find the media item
+      const mediaItem = media.find(m => m.id === mediaId);
+      if (!mediaItem) {
+        console.error('Media item not found:', mediaId);
+        return;
+      }
 
       // Calculate drop position in timeline
       if (!timelineRef.current) return;
@@ -168,35 +188,98 @@ const Timeline: React.FC = () => {
       const dropX = e.clientX - rect.left;
       const dropTime = pixelsToTime(dropX + scrollLeft);
 
-      // Create clip from media item
-      // Images are treated as video clips (still frames)
-      const clipType = mediaItem.type === 'audio' ? 'audio' : 'video';
+      // Calculate clip duration from in/out points
+      const clipDuration = outPoint - inPoint;
 
-      const clip: Clip = {
-        id: `clip-${Date.now()}-${Math.random()}`,
-        type: clipType,
-        mediaId: mediaItem.id,
-        trackId: trackId,
-        timelineStart: Math.max(0, dropTime),
-        duration: mediaItem.duration,
-        mediaIn: 0,
-        mediaOut: mediaItem.duration,
-        name: mediaItem.name,
-        enabled: true,
-        effects: [],
-      };
+      // Determine which track to use based on drag type and target track
+      const track = tracks.find(t => t.id === trackId);
+      if (!track) return;
 
-      dispatch(addClip(clip));
+      // Generate linkId if dropping both video and audio
+      const linkId = type === 'both' ? `link-${Date.now()}-${Math.random()}` : undefined;
+
+      // Create clip(s) based on type
+      // 'video' = video only, 'audio' = audio only, 'both' = linked video+audio
+      if (type === 'video' || type === 'both') {
+        // Find video track (or use current if it's a video track)
+        const videoTrack = track.type === 'video' ? track : tracks.find(t => t.type === 'video');
+        if (videoTrack) {
+          const videoClip: Clip = {
+            id: `clip-${Date.now()}-${Math.random()}`,
+            type: 'video',
+            mediaId: mediaItem.id,
+            trackId: videoTrack.id,
+            timelineStart: Math.max(0, dropTime),
+            duration: clipDuration,
+            mediaIn: inPoint,
+            mediaOut: outPoint,
+            name: mediaItem.name,
+            enabled: true,
+            effects: [],
+            linkId,
+          };
+          dispatch(addClip(videoClip));
+        }
+      }
+
+      if (type === 'audio' || type === 'both') {
+        // Find audio track (or use current if it's an audio track)
+        const audioTrack = track.type === 'audio' ? track : tracks.find(t => t.type === 'audio');
+        if (audioTrack && mediaItem.type !== 'image') {
+          // Images don't have audio
+          const audioClip: Clip = {
+            id: `clip-${Date.now()}-${Math.random()}-audio`,
+            type: 'audio',
+            mediaId: mediaItem.id,
+            trackId: audioTrack.id,
+            timelineStart: Math.max(0, dropTime),
+            duration: clipDuration,
+            mediaIn: inPoint,
+            mediaOut: outPoint,
+            name: mediaItem.name,
+            enabled: true,
+            effects: [],
+            linkId,
+          };
+          dispatch(addClip(audioClip));
+        }
+      }
     } catch (error) {
       console.error('Error dropping media on timeline:', error);
     }
-  }, [dispatch, pixelsToTime, scrollLeft]);
+  }, [dispatch, pixelsToTime, scrollLeft, media, tracks]);
 
   const handleTrackDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect = 'copy';
   }, []);
+
+  // Get all clips linked to a given clip (including the clip itself)
+  const getLinkedClips = useCallback((clipId: string): Clip[] => {
+    // Find the clip first
+    let targetClip: Clip | undefined;
+    for (const track of tracks) {
+      targetClip = track.clips.find(c => c.id === clipId);
+      if (targetClip) break;
+    }
+
+    if (!targetClip || !targetClip.linkId) {
+      return targetClip ? [targetClip] : [];
+    }
+
+    // Find all clips with the same linkId
+    const linkedClips: Clip[] = [];
+    for (const track of tracks) {
+      for (const clip of track.clips) {
+        if (clip.linkId === targetClip.linkId) {
+          linkedClips.push(clip);
+        }
+      }
+    }
+
+    return linkedClips;
+  }, [tracks]);
 
   // Get all snap points (other clip edges and playhead)
   const getSnapPoints = useCallback((excludeClipId: string): number[] => {
@@ -258,6 +341,66 @@ const Timeline: React.FC = () => {
     const clipStartPixels = timeToPixels(clip.timelineStart);
     const mouseOffset = mouseX - clipStartPixels;
 
+    // Get all linked clips for this clip
+    const linkedClips = getLinkedClips(clip.id);
+    const linkedClipIds = linkedClips.map(c => c.id);
+
+    // Handle selection with Ctrl key for multi-select
+    const isSelected = selectedClipIds.includes(clip.id);
+    if (e.ctrlKey || e.metaKey) {
+      // Ctrl+click: toggle selection of clip and all its linked clips
+      if (isSelected) {
+        // Deselect this clip and all linked clips
+        for (const id of linkedClipIds) {
+          dispatch(removeFromSelection(id));
+        }
+        return; // Don't start drag if deselecting
+      } else {
+        // Add this clip and all linked clips to selection
+        for (const id of linkedClipIds) {
+          if (!selectedClipIds.includes(id)) {
+            dispatch(addToSelection(id));
+          }
+        }
+      }
+    } else {
+      // Normal click: select this clip and all linked clips
+      if (!isSelected) {
+        // Clear selection and select all linked clips
+        dispatch(clearSelection());
+        dispatch(selectClip(clip.id));
+        for (const id of linkedClipIds) {
+          if (id !== clip.id) {
+            dispatch(addToSelection(id));
+          }
+        }
+      }
+    }
+
+    // Get clips to drag: if clip is in selection, drag all selected; otherwise just this clip
+    const clipsToDrag = selectedClipIds.includes(clip.id) && selectedClipIds.length > 1
+      ? selectedClipIds
+      : [clip.id];
+
+    // Also include linked clips for all clips being dragged
+    const allClipIds = new Set<string>();
+    for (const id of clipsToDrag) {
+      const linked = getLinkedClips(id);
+      for (const c of linked) {
+        allClipIds.add(c.id);
+      }
+    }
+
+    // Get initial positions for all clips to be moved
+    const initialPositions: { id: string; start: number }[] = [];
+    for (const track of tracks) {
+      for (const c of track.clips) {
+        if (allClipIds.has(c.id)) {
+          initialPositions.push({ id: c.id, start: c.timelineStart });
+        }
+      }
+    }
+
     setDraggingClip({ id: clip.id, initialStart: clip.timelineStart, mouseOffset });
 
     const onMouseMove = (moveEvent: MouseEvent) => {
@@ -271,7 +414,14 @@ const Timeline: React.FC = () => {
       // Apply snapping
       newStartTime = findSnapPoint(newStartTime, clip.duration, clip.id);
 
-      dispatch(updateClip({ id: clip.id, updates: { timelineStart: newStartTime } }));
+      // Calculate the delta from original position
+      const delta = newStartTime - clip.timelineStart;
+
+      // Move all selected/linked clips by the same delta
+      for (const pos of initialPositions) {
+        const newStart = Math.max(0, pos.start + delta);
+        dispatch(updateClip({ id: pos.id, updates: { timelineStart: newStart } }));
+      }
     };
 
     const onMouseUp = () => {
@@ -283,7 +433,7 @@ const Timeline: React.FC = () => {
 
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
-  }, [dispatch, timeToPixels, pixelsToTime, findSnapPoint]);
+  }, [dispatch, timeToPixels, pixelsToTime, findSnapPoint, getLinkedClips, selectedClipIds, tracks]);
 
   // Format time as MM:SS:FF (or just frames for sub-second markers)
   const formatTime = (seconds: number, forRuler = false): string => {
@@ -389,12 +539,54 @@ const Timeline: React.FC = () => {
     zoomWithPlayheadCenter(newZoom);
   }, [zoom, zoomWithPlayheadCenter]);
 
+  // Check if all selected clips share the same linkId (are linked together)
+  const selectionLinkStatus = (() => {
+    if (selectedClipIds.length < 2) return { canToggle: false, areLinked: false };
+
+    // Get linkIds for all selected clips
+    const linkIds = new Set<string | undefined>();
+    for (const clipId of selectedClipIds) {
+      for (const track of tracks) {
+        const clip = track.clips.find(c => c.id === clipId);
+        if (clip) {
+          linkIds.add(clip.linkId);
+          break;
+        }
+      }
+    }
+
+    // If all clips have the same linkId (and it's not undefined), they're linked
+    const areLinked = linkIds.size === 1 && !linkIds.has(undefined);
+    return { canToggle: true, areLinked };
+  })();
+
+  // Handle link toggle - links or unlinks selected clips
+  const handleLinkToggle = useCallback(() => {
+    if (selectedClipIds.length < 2) return;
+
+    if (selectionLinkStatus.areLinked) {
+      // Unlink: remove linkId from all selected clips
+      dispatch(unlinkClips(selectedClipIds));
+    } else {
+      // Link: assign same linkId to all selected clips
+      dispatch(linkClips(selectedClipIds));
+    }
+  }, [dispatch, selectedClipIds, selectionLinkStatus.areLinked]);
+
   return (
     <div className="timeline">
       {/* Timeline toolbar */}
       <div className="timeline-toolbar">
         <div className="timeline-timecode">{formatTime(playhead)}</div>
         <div className="timeline-toolbar-right">
+          <button
+            className={`link-toggle ${selectionLinkStatus.canToggle ? '' : 'disabled'} ${selectionLinkStatus.areLinked ? 'linked' : ''}`}
+            onClick={handleLinkToggle}
+            disabled={!selectionLinkStatus.canToggle}
+            title={selectionLinkStatus.areLinked ? 'Unlink clips' : 'Link clips'}
+          >
+            <Link size={16} />
+          </button>
           <button
             className={`snap-toggle ${snapEnabled ? 'active' : ''}`}
             onClick={() => setSnapEnabled(!snapEnabled)}
@@ -420,6 +612,8 @@ const Timeline: React.FC = () => {
       <div className="timeline-content">
         {/* Track headers (left side) */}
         <div className="timeline-track-headers">
+          {/* Spacer to align with timeline ruler */}
+          <div className="track-headers-spacer" />
           {tracks.map(track => (
             <div key={track.id} className="track-header">
               <span className="track-name">{track.name}</span>
@@ -477,10 +671,15 @@ const Timeline: React.FC = () => {
                   const left = timeToPixels(clip.timelineStart);
                   const width = timeToPixels(clip.duration);
 
+                  const isSelected = selectedClipIds.includes(clip.id);
+                  const clipMedia = clip.mediaId ? media.find(m => m.id === clip.mediaId) : null;
+                  const isVideoClip = clip.type === 'video';
+                  const isAudioClip = clip.type === 'audio';
+
                   return (
                     <div
                       key={clip.id}
-                      className={`clip ${draggingClip?.id === clip.id ? 'dragging' : ''}`}
+                      className={`clip ${isVideoClip ? 'video-clip' : ''} ${isAudioClip ? 'audio-clip' : ''} ${isSelected ? 'selected' : ''} ${draggingClip?.id === clip.id ? 'dragging' : ''}`}
                       style={{
                         left: `${left}px`,
                         width: `${width}px`,
@@ -488,7 +687,29 @@ const Timeline: React.FC = () => {
                       onMouseDown={(e) => handleClipMouseDown(e, clip)}
                     >
                       <div className="clip-content">
-                        <span className="clip-name">{clip.name}</span>
+                        {/* Clip name overlay */}
+                        <div className="clip-info">
+                          {clip.linkId && (
+                            <Link size={12} className="clip-link-indicator" />
+                          )}
+                          <span className="clip-name">{clip.name}</span>
+                        </div>
+
+                        {/* Video thumbnail */}
+                        {isVideoClip && (
+                          <div className="clip-thumbnail">
+                            {clipMedia?.thumbnailPath ? (
+                              <img src={clipMedia.thumbnailPath} alt="" />
+                            ) : (
+                              <div className="clip-thumbnail-placeholder">▶</div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Waveform area (for both video and audio clips) */}
+                        <div className="clip-waveform">
+                          <div className="clip-waveform-placeholder" />
+                        </div>
                       </div>
                     </div>
                   );

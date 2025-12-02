@@ -64,6 +64,41 @@
   border-color: var(--accent-blue-hover);
 }
 
+.link-toggle {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.link-toggle:hover:not(.disabled) {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.link-toggle.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.link-toggle.linked {
+  background-color: var(--accent-blue);
+  border-color: var(--accent-blue);
+  color: #fff;
+}
+
+.link-toggle.linked:hover:not(.disabled) {
+  background-color: var(--accent-blue-hover);
+  border-color: var(--accent-blue-hover);
+}
+
 .timeline-zoom-controls {
   display: flex;
   align-items: center;
@@ -114,6 +149,16 @@
   background-color: var(--bg-secondary);
   border-right: 1px solid var(--border-color);
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Spacer to align with timeline ruler */
+.track-headers-spacer {
+  height: 30px;
+  flex-shrink: 0;
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .track-header {
@@ -234,16 +279,31 @@
   position: absolute;
   top: 4px;
   height: 52px;
-  background-color: #4a90e2;
-  border: 1px solid #3a7bc8;
-  border-radius: 3px;
+  border-radius: 2px;
   cursor: grab;
   overflow: hidden;
-  transition: transform 0.1s, box-shadow 0.1s;
+  transition: box-shadow 0.1s;
+}
+
+/* Video clips - blue/teal gradient */
+.clip.video-clip {
+  background: linear-gradient(180deg, #5a8fc7 0%, #3d6a9e 100%);
+  border: 1px solid #2d5a8e;
+}
+
+/* Audio clips - green gradient */
+.clip.audio-clip {
+  background: linear-gradient(180deg, #4a9e6a 0%, #3a7e5a 100%);
+  border: 1px solid #2a6e4a;
 }
 
 .clip:hover {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* Premiere-style thick inner border on select */
+.clip.selected {
+  box-shadow: inset 0 0 0 2px #fff, 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 .clip.dragging {
@@ -253,20 +313,145 @@
   opacity: 0.9;
 }
 
+.clip.selected.dragging {
+  box-shadow: inset 0 0 0 2px #fff, 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+/* Clip inner layout */
 .clip-content {
-  padding: 4px 8px;
+  display: flex;
+  height: 100%;
+  position: relative;
+}
+
+/* Video thumbnail */
+.clip-thumbnail {
+  width: 50px;
+  height: 100%;
+  flex-shrink: 0;
+  background-color: rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+.clip-thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.clip-thumbnail-placeholder {
+  width: 100%;
   height: 100%;
   display: flex;
   align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 16px;
+}
+
+/* Clip info overlay */
+.clip-info {
+  position: absolute;
+  top: 2px;
+  left: 54px; /* After thumbnail */
+  right: 4px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* When no thumbnail (audio clips), position from left */
+.audio-clip .clip-info {
+  left: 4px;
 }
 
 .clip-name {
   font-size: 11px;
   font-weight: 500;
   color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Link indicator */
+.clip-link-indicator {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* Audio waveform container */
+.clip-waveform {
+  flex: 1;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+}
+
+.clip-waveform canvas {
+  width: 100%;
+  height: 100%;
+}
+
+/* Waveform placeholder - simulated waveform look */
+.clip-waveform-placeholder {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 1px;
+  padding: 8px 4px;
+}
+
+/* Simulated waveform using inline SVG background */
+.clip-waveform-placeholder::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Video clip - subtle waveform */
+.video-clip .clip-waveform-placeholder {
+  background-image: repeating-linear-gradient(
+    90deg,
+    transparent,
+    transparent 1px,
+    rgba(180, 210, 255, 0.2) 1px,
+    rgba(180, 210, 255, 0.35) 2px,
+    rgba(180, 210, 255, 0.2) 3px,
+    transparent 3px,
+    transparent 4px
+  );
+  background-size: 4px 60%;
+  background-position: 0 50%;
+  background-repeat: repeat-x;
+}
+
+/* Audio clip waveform - more prominent green */
+.audio-clip .clip-waveform-placeholder {
+  background-image: repeating-linear-gradient(
+    90deg,
+    transparent,
+    transparent 1px,
+    rgba(180, 255, 200, 0.25) 1px,
+    rgba(180, 255, 200, 0.45) 2px,
+    rgba(180, 255, 200, 0.25) 3px,
+    transparent 3px,
+    transparent 4px
+  );
+  background-size: 4px 80%;
+  background-position: 0 50%;
+  background-repeat: repeat-x;
 }
 
 /* Playhead */

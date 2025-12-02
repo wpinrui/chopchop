@@ -105,18 +105,21 @@ export interface Clip {
   type: ClipType;
   mediaId: string | null; // null for generators (titles, solids)
   trackId: string;
-  
+
   // Timing (all in seconds)
   timelineStart: number;
   duration: number;
   mediaIn: number; // source in point
   mediaOut: number; // source out point
-  
+
   // Properties
   name: string;
   enabled: boolean;
   effects: Effect[];
-  
+
+  // Linking - clips with same linkId move together
+  linkId?: string;
+
   // Type-specific
   videoProperties?: VideoClipProperties;
   audioProperties?: AudioClipProperties;

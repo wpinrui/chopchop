@@ -196,13 +196,7 @@ const MediaBin = forwardRef<MediaBinHandle>((props, ref) => {
             <div
               key={item.id}
               className="media-item"
-              draggable
               onDoubleClick={() => dispatch(setSourceMediaId(item.id))}
-              onDragStart={(e) => {
-                // Store media item data for timeline drop
-                e.dataTransfer.setData('application/chopchop-media', JSON.stringify(item));
-                e.dataTransfer.effectAllowed = 'copy';
-              }}
             >
               <div className="media-thumbnail">
                 {item.thumbnailPath ? (

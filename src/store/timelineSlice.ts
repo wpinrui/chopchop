@@ -81,6 +81,33 @@ const timelineSlice = createSlice({
       }
     },
 
+    // Unlink clips - removes linkId from specified clip IDs
+    unlinkClips: (state, action: PayloadAction<string[]>) => {
+      const clipIdsToUnlink = action.payload;
+      for (const track of state.tracks) {
+        for (const clip of track.clips) {
+          if (clipIdsToUnlink.includes(clip.id)) {
+            delete clip.linkId;
+          }
+        }
+      }
+    },
+
+    // Link clips - assigns same linkId to all specified clip IDs
+    linkClips: (state, action: PayloadAction<string[]>) => {
+      const clipIdsToLink = action.payload;
+      if (clipIdsToLink.length < 2) return; // Need at least 2 clips to link
+
+      const newLinkId = `link-${Date.now()}-${Math.random()}`;
+      for (const track of state.tracks) {
+        for (const clip of track.clips) {
+          if (clipIdsToLink.includes(clip.id)) {
+            clip.linkId = newLinkId;
+          }
+        }
+      }
+    },
+
     // Markers
     addMarker: (state, action: PayloadAction<Marker>) => {
       state.markers.push(action.payload);
@@ -120,6 +147,8 @@ export const {
   addClip,
   removeClip,
   updateClip,
+  unlinkClips,
+  linkClips,
   addMarker,
   removeMarker,
   setZoom,
