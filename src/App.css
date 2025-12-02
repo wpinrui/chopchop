@@ -72,13 +72,13 @@
   flex-direction: column;
   background-color: var(--bg-secondary);
   overflow: hidden;
-  outline: 2px solid transparent;
-  outline-offset: -2px;
-  transition: outline-color 0.15s;
+  padding: 1px;
+  border: 1px solid transparent;
+  transition: border-color 0.15s;
 }
 
 .panel.active {
-  outline-color: var(--accent-blue);
+  border-color: var(--accent-blue);
 }
 
 .panel-header {

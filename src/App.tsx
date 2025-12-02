@@ -178,7 +178,10 @@ const App: React.FC = () => {
       <div className="app-body">
         {/* Top row: Source/Effects (left) | Sequence Preview (right) */}
         <div className="top-row" style={{ height: `${topRowHeight}%` }}>
-          <div className="panel effects-panel" style={{ width: `${topLeftWidth}%` }}>
+          <div
+            className={`panel effects-panel ${activePane === 'source' ? 'active' : ''}`}
+            style={{ width: `${topLeftWidth}%` }}
+          >
             <div className="panel-header">
               <div className="tab-bar">
                 <button

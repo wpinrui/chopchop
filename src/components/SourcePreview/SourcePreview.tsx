@@ -393,7 +393,7 @@ const SourcePreview: React.FC = () => {
   // No media selected
   if (!sourceMedia) {
     return (
-      <div className={`source-preview ${isActive ? 'active' : ''}`} onClick={handlePaneClick}>
+      <div className="source-preview" onClick={handlePaneClick}>
         <div className="source-preview-empty">
           <p>No source clip selected</p>
           <p className="hint">Double-click a clip in the Media Bin to preview</p>
@@ -409,7 +409,7 @@ const SourcePreview: React.FC = () => {
     : '';
 
   return (
-    <div className={`source-preview ${isActive ? 'active' : ''}`} onClick={handlePaneClick}>
+    <div className="source-preview" onClick={handlePaneClick}>
       {/* Video display */}
       <div className="source-video-container">
         <video
