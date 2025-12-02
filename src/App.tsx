@@ -8,6 +8,7 @@ import type { RootState } from './store';
 import MediaBin, { type MediaBinHandle } from './components/MediaBin/MediaBin';
 import Timeline from './components/Timeline/Timeline';
 import SourcePreview from './components/SourcePreview/SourcePreview';
+import ProgramMonitor from './components/ProgramMonitor/ProgramMonitor';
 import ExportDialog from './components/ExportDialog/ExportDialog';
 import { addTrack, loadTimeline } from './store/timelineSlice';
 import { setActivePane } from './store/uiSlice';
@@ -507,10 +508,7 @@ const App: React.FC = () => {
           >
             <div className="panel-header">Program Monitor</div>
             <div className="panel-content viewer-content">
-              {/* TODO: Viewer component */}
-              <div className="viewer-placeholder">
-                <p>Sequence preview</p>
-              </div>
+              <ProgramMonitor />
             </div>
           </div>
         </div>
