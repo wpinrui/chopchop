@@ -4,7 +4,7 @@
  * Main timeline for arranging and editing clips.
  */
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import type { RootState } from '../../store';
 import { setPlayheadPosition, addClip } from '../../store/timelineSlice';
@@ -18,29 +18,53 @@ const Timeline: React.FC = () => {
   const fps = useSelector((state: RootState) => state.project.fps);
 
   const timelineRef = useRef<HTMLDivElement>(null);
+  const timelineAreaRef = useRef<HTMLDivElement>(null);
+  const scrollbarRef = useRef<HTMLDivElement>(null);
+
   const [zoom, setZoom] = useState(1); // Pixels per second
   const [isDraggingPlayhead, setIsDraggingPlayhead] = useState(false);
+  const [scrollLeft, setScrollLeft] = useState(0);
+  const [viewportWidth, setViewportWidth] = useState(0);
 
-  // Get the longest track duration for timeline width
-  const maxDuration = Math.max(
+  // Calculate maximum timeline duration: max(5 min, 2 * existing media length)
+  const longestClipEnd = Math.max(
     ...tracks.map(track => {
       const lastClip = track.clips[track.clips.length - 1];
       return lastClip ? lastClip.timelineStart + lastClip.duration : 0;
     }),
-    60 // Minimum 60 seconds
+    0
   );
+  const maxDuration = Math.max(300, longestClipEnd * 2); // 5 minutes or 2x media length
 
-  const timelineWidth = maxDuration * zoom * 100; // Convert to pixels
+  // Timeline width is the full content width at current zoom level
+  const basePixelsPerSecond = 100; // Base scale: 100 pixels per second
+  const timelineWidth = maxDuration * basePixelsPerSecond * zoom;
 
-  // Convert time (seconds) to pixels
+  // Convert time (seconds) to pixels based on current zoom
   const timeToPixels = (seconds: number): number => {
-    return seconds * zoom * 100;
+    return seconds * basePixelsPerSecond * zoom;
   };
 
-  // Convert pixels to time (seconds)
+  // Convert pixels to time (seconds) based on current zoom
   const pixelsToTime = (pixels: number): number => {
-    return pixels / (zoom * 100);
+    return pixels / (basePixelsPerSecond * zoom);
   };
+
+  // Calculate ruler interval based on zoom level
+  const getRulerInterval = (): number => {
+    const pixelsPerSecond = zoom * 100;
+    const viewportSeconds = viewportWidth / pixelsPerSecond;
+
+    // Aim for 8-12 markers across the viewport
+    const targetMarkers = 10;
+    const idealInterval = viewportSeconds / targetMarkers;
+
+    // Snap to nice intervals: 1, 5, 10, 30, 60, 300, 600, etc.
+    const intervals = [1, 5, 10, 30, 60, 300, 600, 1800, 3600];
+    return intervals.find(i => i >= idealInterval) || 3600;
+  };
+
+  const rulerInterval = getRulerInterval();
 
   // Handle timeline click to move playhead
   const handleTimelineClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
@@ -48,10 +72,10 @@ const Timeline: React.FC = () => {
 
     const rect = timelineRef.current.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
-    const newTime = pixelsToTime(clickX);
+    const newTime = pixelsToTime(clickX + scrollLeft);
 
     dispatch(setPlayheadPosition(Math.max(0, newTime)));
-  }, [dispatch, zoom]);
+  }, [dispatch, zoom, scrollLeft, pixelsToTime]);
 
   // Playhead dragging
   const handlePlayheadMouseDown = useCallback((e: React.MouseEvent) => {
@@ -74,7 +98,7 @@ const Timeline: React.FC = () => {
       if (!timelineRef.current) return;
       const rect = timelineRef.current.getBoundingClientRect();
       const dropX = e.clientX - rect.left;
-      const dropTime = pixelsToTime(dropX);
+      const dropTime = pixelsToTime(dropX + scrollLeft);
 
       // Create clip from media item
       const clip: Clip = {
@@ -111,6 +135,100 @@ const Timeline: React.FC = () => {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}:${frames.toString().padStart(2, '0')}`;
   };
 
+  // Track viewport width
+  useEffect(() => {
+    const updateViewportWidth = () => {
+      if (timelineAreaRef.current) {
+        setViewportWidth(timelineAreaRef.current.clientWidth);
+      }
+    };
+
+    updateViewportWidth();
+    window.addEventListener('resize', updateViewportWidth);
+    return () => window.removeEventListener('resize', updateViewportWidth);
+  }, []);
+
+  // Horizontal scroll with mouse wheel
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault();
+    const newScrollLeft = Math.max(0, Math.min(timelineWidth - viewportWidth, scrollLeft + e.deltaY));
+    setScrollLeft(newScrollLeft);
+  }, [scrollLeft, timelineWidth, viewportWidth]);
+
+  // Custom scrollbar dragging
+  const handleScrollbarThumbDrag = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const scrollbarTrack = scrollbarRef.current;
+    if (!scrollbarTrack) return;
+
+    const startX = e.clientX;
+    const startScrollLeft = scrollLeft;
+    const trackWidth = scrollbarTrack.clientWidth;
+    const thumbWidth = Math.max(50, (viewportWidth / timelineWidth) * trackWidth);
+    const maxThumbLeft = trackWidth - thumbWidth;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const deltaX = moveEvent.clientX - startX;
+      const deltaScroll = (deltaX / maxThumbLeft) * (timelineWidth - viewportWidth);
+      const newScrollLeft = Math.max(0, Math.min(timelineWidth - viewportWidth, startScrollLeft + deltaScroll));
+      setScrollLeft(newScrollLeft);
+    };
+
+    const onMouseUp = () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  }, [scrollLeft, timelineWidth, viewportWidth]);
+
+  // Scrollbar handle resize (zoom)
+  const handleScrollbarHandleDrag = useCallback((e: React.MouseEvent, side: 'left' | 'right') => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const scrollbarTrack = scrollbarRef.current;
+    if (!scrollbarTrack) return;
+
+    const startX = e.clientX;
+    const startZoom = zoom;
+    const trackWidth = scrollbarTrack.clientWidth;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const deltaX = moveEvent.clientX - startX;
+      const deltaPercent = deltaX / trackWidth;
+
+      // Adjust zoom based on handle drag
+      // Dragging handles inward = zoom in, outward = zoom out
+      const zoomFactor = side === 'left' ? -deltaPercent * 5 : deltaPercent * 5;
+      const newZoom = Math.max(0.1, Math.min(10, startZoom + zoomFactor));
+      setZoom(newZoom);
+    };
+
+    const onMouseUp = () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  }, [zoom]);
+
+  // Click on scrollbar track to jump
+  const handleScrollbarTrackClick = useCallback((e: React.MouseEvent) => {
+    if (!scrollbarRef.current) return;
+
+    const rect = scrollbarRef.current.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const trackWidth = rect.width;
+    const scrollRatio = clickX / trackWidth;
+    const newScrollLeft = Math.max(0, Math.min(timelineWidth - viewportWidth, scrollRatio * timelineWidth));
+    setScrollLeft(newScrollLeft);
+  }, [timelineWidth, viewportWidth]);
+
   // Handle zoom
   const handleZoomIn = () => setZoom(prev => Math.min(prev * 1.5, 10));
   const handleZoomOut = () => setZoom(prev => Math.max(prev / 1.5, 0.1));
@@ -120,11 +238,6 @@ const Timeline: React.FC = () => {
       {/* Timeline toolbar */}
       <div className="timeline-toolbar">
         <div className="timeline-timecode">{formatTime(playhead)}</div>
-        <div className="timeline-zoom-controls">
-          <button onClick={handleZoomOut} title="Zoom Out">−</button>
-          <div className="zoom-level">{Math.round(zoom * 100)}%</div>
-          <button onClick={handleZoomIn} title="Zoom In">+</button>
-        </div>
       </div>
 
       {/* Timeline ruler and tracks */}
@@ -144,23 +257,35 @@ const Timeline: React.FC = () => {
         </div>
 
         {/* Timeline area (right side) */}
-        <div className="timeline-area" ref={timelineRef} onClick={handleTimelineClick}>
-          {/* Time ruler */}
-          <div className="timeline-ruler" style={{ width: `${timelineWidth}px` }}>
-            {Array.from({ length: Math.ceil(maxDuration / 5) }).map((_, i) => {
-              const seconds = i * 5;
-              return (
-                <div
-                  key={i}
-                  className="ruler-marker"
-                  style={{ left: `${timeToPixels(seconds)}px` }}
-                >
-                  <div className="ruler-tick" />
-                  <div className="ruler-label">{formatTime(seconds)}</div>
-                </div>
-              );
-            })}
-          </div>
+        <div
+          className="timeline-area"
+          ref={timelineAreaRef}
+          onWheel={handleWheel}
+        >
+          <div className="timeline-viewport">
+            <div
+              className="timeline-scrollable-content"
+              ref={timelineRef}
+              onClick={handleTimelineClick}
+            >
+              {/* Time ruler */}
+              <div className="timeline-ruler">
+              {Array.from({ length: Math.ceil(maxDuration / rulerInterval) }).map((_, i) => {
+                const seconds = i * rulerInterval;
+                const position = timeToPixels(seconds) - scrollLeft;
+                if (position < -100 || position > viewportWidth + 100) return null;
+                return (
+                  <div
+                    key={i}
+                    className="ruler-marker"
+                    style={{ left: `${position}px` }}
+                  >
+                    <div className="ruler-tick" />
+                    <div className="ruler-label">{formatTime(seconds)}</div>
+                  </div>
+                );
+              })}
+            </div>
 
           {/* Tracks */}
           <div className="timeline-tracks">
@@ -168,14 +293,16 @@ const Timeline: React.FC = () => {
               <div
                 key={track.id}
                 className="track"
-                style={{ width: `${timelineWidth}px` }}
                 onDragOver={handleTrackDragOver}
                 onDrop={(e) => handleTrackDrop(e, track.id)}
               >
                 {/* Render clips */}
                 {track.clips.map(clip => {
-                  const left = timeToPixels(clip.timelineStart);
+                  const left = timeToPixels(clip.timelineStart) - scrollLeft;
                   const width = timeToPixels(clip.duration);
+
+                  // Only render clips that are visible in viewport
+                  if (left + width < -100 || left > viewportWidth + 100) return null;
 
                   return (
                     <div
@@ -196,14 +323,41 @@ const Timeline: React.FC = () => {
             ))}
           </div>
 
-          {/* Playhead */}
+            {/* Playhead */}
+            <div
+              className="playhead"
+              style={{ left: `${timeToPixels(playhead) - scrollLeft}px` }}
+              onMouseDown={handlePlayheadMouseDown}
+            >
+              <div className="playhead-handle" />
+              <div className="playhead-line" />
+            </div>
+            </div>
+          </div>
+
+          {/* Custom scrollbar */}
           <div
-            className="playhead"
-            style={{ left: `${timeToPixels(playhead)}px` }}
-            onMouseDown={handlePlayheadMouseDown}
+            className="timeline-scrollbar"
+            ref={scrollbarRef}
+            onClick={handleScrollbarTrackClick}
           >
-            <div className="playhead-handle" />
-            <div className="playhead-line" />
+            <div
+              className="timeline-scrollbar-thumb"
+              style={{
+                width: `${Math.max(50, (viewportWidth / timelineWidth) * 100)}%`,
+                left: `${(scrollLeft / timelineWidth) * 100}%`,
+              }}
+              onMouseDown={handleScrollbarThumbDrag}
+            >
+              <div
+                className="timeline-scrollbar-handle timeline-scrollbar-handle-left"
+                onMouseDown={(e) => handleScrollbarHandleDrag(e, 'left')}
+              />
+              <div
+                className="timeline-scrollbar-handle timeline-scrollbar-handle-right"
+                onMouseDown={(e) => handleScrollbarHandleDrag(e, 'right')}
+              />
+            </div>
           </div>
         </div>
       </div>
