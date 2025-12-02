@@ -23,6 +23,7 @@ import type { RootState } from '../../store';
 import { setPlayheadPosition } from '../../store/timelineSlice';
 import { setActivePane, setPlayingPane } from '../../store/uiSlice';
 import { updateSettings } from '../../store/projectSlice';
+import TimecodeInput from '../TimecodeInput/TimecodeInput';
 import type { Track, Clip, MediaItem } from '@types';
 import './ProgramMonitor.css';
 
@@ -106,6 +107,8 @@ const ProgramMonitor: React.FC = () => {
   const currentClipRef = useRef<string | null>(null);
   const seekingRef = useRef(false);
   const animationFrameRef = useRef<number | null>(null);
+  const scrubBarRef = useRef<HTMLDivElement>(null);
+  const [isScrubbing, setIsScrubbing] = useState(false);
 
   // Track container size with ResizeObserver
   useEffect(() => {
@@ -804,6 +807,18 @@ const ProgramMonitor: React.FC = () => {
     setIsMuted(!isMuted);
   }, [isMuted]);
 
+  // Handle timecode input change
+  const handleTimecodeChange = useCallback((newTime: number) => {
+    // Pause if playing
+    if (isPlaying) {
+      videoRef.current?.pause();
+      previewVideoRef.current?.pause();
+      setIsPlaying(false);
+      setPlaybackDirection(0);
+    }
+    dispatch(setPlayheadPosition(newTime));
+  }, [isPlaying, dispatch]);
+
   // Cancel loading dialog
   const handleCancelLoading = useCallback(() => {
     setShowLoadingDialog(false);
@@ -832,21 +847,54 @@ const ProgramMonitor: React.FC = () => {
   // Calculate playhead percentage for scrub bar
   const playheadPercent = timelineDuration > 0 ? (playheadPosition / timelineDuration) * 100 : 0;
 
-  // Scrub bar click handler
-  const handleScrubClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const percent = (e.clientX - rect.left) / rect.width;
-    const newPosition = percent * timelineDuration;
+  // Helper to calculate position from mouse event
+  const getPositionFromMouseEvent = useCallback((clientX: number) => {
+    const scrubBar = scrubBarRef.current;
+    if (!scrubBar) return 0;
+    const rect = scrubBar.getBoundingClientRect();
+    const percent = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    return percent * timelineDuration;
+  }, [timelineDuration]);
+
+  // Scrub bar mouse down - start dragging
+  const handleScrubMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsScrubbing(true);
 
     // Pause if playing
     if (isPlaying) {
       videoRef.current?.pause();
+      previewVideoRef.current?.pause();
       setIsPlaying(false);
       setPlaybackDirection(0);
     }
 
+    // Set initial position
+    const newPosition = getPositionFromMouseEvent(e.clientX);
     dispatch(setPlayheadPosition(newPosition));
-  }, [timelineDuration, isPlaying, dispatch]);
+  }, [isPlaying, getPositionFromMouseEvent, dispatch]);
+
+  // Handle mouse move and mouse up for scrubbing (window-level listeners)
+  useEffect(() => {
+    if (!isScrubbing) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const newPosition = getPositionFromMouseEvent(e.clientX);
+      dispatch(setPlayheadPosition(newPosition));
+    };
+
+    const handleMouseUp = () => {
+      setIsScrubbing(false);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isScrubbing, getPositionFromMouseEvent, dispatch]);
 
   // Convert file path to file:// URL
   // Use proxy file if available and proxies are enabled
@@ -929,7 +977,7 @@ const ProgramMonitor: React.FC = () => {
                   style={{ width: `${renderProgress}%` }}
                 />
               </div>
-              <p className="loading-progress-text">{renderProgress}% complete</p>
+              <p className="loading-progress-text">{renderProgress.toFixed(1)}% complete</p>
               <button onClick={handleCancelLoading} className="loading-cancel-btn">
                 Cancel
               </button>
@@ -945,20 +993,25 @@ const ProgramMonitor: React.FC = () => {
           </div>
         )}
 
-        {/* Resolution indicator */}
-        <div className="program-resolution-badge">
-          {fullWidth}x{fullHeight}
-        </div>
       </div>
 
       <div className="program-info-bar">
-        <span className="program-timecode">{formatTimecode(playheadPosition)}</span>
-        <span className="program-name">{hasClip ? clipAtPlayhead.clip.name : 'Program'}</span>
+        <TimecodeInput
+          value={playheadPosition}
+          fps={fps}
+          onChange={handleTimecodeChange}
+          max={timelineDuration}
+          className="program-timecode"
+        />
         <span className="program-duration">{formatTimecode(timelineDuration)}</span>
       </div>
 
       <div className="program-scrub-container">
-        <div className="program-scrub-bar" onClick={handleScrubClick}>
+        <div
+          ref={scrubBarRef}
+          className={`program-scrub-bar ${isScrubbing ? 'scrubbing' : ''}`}
+          onMouseDown={handleScrubMouseDown}
+        >
           <div className="program-playhead" style={{ left: `${playheadPercent}%` }} />
         </div>
       </div>
@@ -995,7 +1048,7 @@ const ProgramMonitor: React.FC = () => {
           {/* Render status indicator */}
           {previewRendering && (
             <span className="render-status" title="Background rendering in progress">
-              {renderProgress}%
+              {renderProgress.toFixed(1)}%
             </span>
           )}
           {/* Preview playback toggle */}

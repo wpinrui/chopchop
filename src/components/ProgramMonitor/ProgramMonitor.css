@@ -145,6 +145,10 @@
   cursor: pointer;
 }
 
+.program-scrub-bar.scrubbing {
+  cursor: ew-resize;
+}
+
 .program-playhead {
   position: absolute;
   top: -2px;
@@ -177,19 +181,25 @@
 }
 
 .program-transport .transport-left,
-.program-transport .transport-center,
 .program-transport .transport-right {
   display: flex;
   align-items: center;
   gap: 4px;
+  flex: 1;
+}
+
+.program-transport .transport-left {
+  justify-content: flex-start;
 }
 
 .program-transport .transport-center {
+  display: flex;
+  align-items: center;
   gap: 2px;
+  flex: 0 0 auto;
 }
 
 .program-transport .transport-right {
-  min-width: 50px;
   justify-content: flex-end;
 }
 

@@ -1,0 +1,26 @@
+/* Timecode Input Component Styles */
+
+.timecode-input {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 2px;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.timecode-input:hover {
+  background-color: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.timecode-input.editing {
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--accent-blue);
+  color: var(--text-primary);
+  outline: none;
+  width: 90px;
+  text-align: center;
+  cursor: text;
+}

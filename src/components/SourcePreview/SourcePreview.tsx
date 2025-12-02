@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import type { RootState } from '../../store';
 import { setSourceInPoint, setSourceOutPoint, setActivePane, setPlayingPane } from '../../store/uiSlice';
+import TimecodeInput from '../TimecodeInput/TimecodeInput';
 import './SourcePreview.css';
 
 // Playback speeds for J/L shuttle control
@@ -399,6 +400,14 @@ const SourcePreview: React.FC = () => {
     document.addEventListener('mouseup', onMouseUp);
   }, [duration]);
 
+  // Handle timecode input change
+  const handleTimecodeChange = useCallback((newTime: number) => {
+    setCurrentTime(newTime);
+    if (videoRef.current) {
+      videoRef.current.currentTime = newTime;
+    }
+  }, []);
+
   // Drag handlers for inserting into timeline
   const handleDragStart = useCallback((e: React.DragEvent, type: 'video' | 'audio' | 'both') => {
     if (!sourceMedia) return;
@@ -523,7 +532,13 @@ const SourcePreview: React.FC = () => {
 
       {/* Info bar */}
       <div className="source-info-bar">
-        <span className="source-timecode">{formatTimecode(currentTime)}</span>
+        <TimecodeInput
+          value={currentTime}
+          fps={fps}
+          onChange={handleTimecodeChange}
+          max={duration}
+          className="source-timecode"
+        />
         <span className="source-name" title={sourceMedia.name}>{sourceMedia.name}</span>
         <span className="source-duration">{formatTimecode(duration)}</span>
       </div>
