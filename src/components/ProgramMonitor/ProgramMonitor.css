@@ -247,6 +247,30 @@
   margin-right: 4px;
 }
 
+/* Proxy toggle button */
+.proxy-toggle {
+  padding: 2px 6px;
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-right: 8px;
+}
+
+.proxy-toggle:hover {
+  border-color: var(--border-light);
+  color: var(--text-primary);
+}
+
+.proxy-toggle.active {
+  background-color: rgba(46, 204, 113, 0.2);
+  border-color: rgba(46, 204, 113, 0.5);
+  color: rgb(46, 204, 113);
+}
+
 /* Preview quality dropdown */
 .preview-quality-select {
   padding: 2px 4px;

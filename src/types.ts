@@ -42,9 +42,9 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   frameRate: 30,
   backgroundColor: '#000000',
   sequenceInitialized: false,
-  previewQuality: 0.5, // Default to half resolution for better performance
+  previewQuality: 0.25, // Default to quarter resolution for better performance
   proxyEnabled: true,
-  proxyScale: 0.5,
+  proxyScale: 0.25, // Quarter resolution proxy for fast playback
   audioSampleRate: 48000,
   audioChannels: 2,
 };

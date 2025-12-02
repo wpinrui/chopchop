@@ -4,13 +4,18 @@
  * Displays imported media files with thumbnails and metadata.
  */
 
-import React, { useCallback, useState, useImperativeHandle, forwardRef } from 'react';
+import React, { useCallback, useState, useImperativeHandle, forwardRef, useEffect } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import type { RootState } from '../../store';
 import { addMediaItem, updateMediaItem } from '../../store/projectSlice';
 import { setSourceMediaId } from '../../store/uiSlice';
 import type { MediaItem } from '@types';
 import './MediaBin.css';
+
+// Track proxy generation progress per media item
+interface ProxyProgress {
+  [mediaId: string]: number; // percent 0-100
+}
 
 export interface MediaBinHandle {
   triggerImport: () => void;
@@ -19,7 +24,106 @@ export interface MediaBinHandle {
 const MediaBin = forwardRef<MediaBinHandle>((_props, ref) => {
   const dispatch = useDispatch();
   const media = useSelector((state: RootState) => state.project.media);
+  const proxyEnabled = useSelector((state: RootState) => state.project.settings.proxyEnabled);
+  const proxyScale = useSelector((state: RootState) => state.project.settings.proxyScale);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [proxyProgress, setProxyProgress] = useState<ProxyProgress>({});
+
+  // Listen for proxy generation progress events
+  useEffect(() => {
+    if (!window.electronAPI) return;
+
+    const cleanup = window.electronAPI.media.onProxyProgress((progress) => {
+      setProxyProgress((prev) => ({
+        ...prev,
+        [progress.mediaId]: progress.percent,
+      }));
+    });
+
+    return cleanup;
+  }, []);
+
+  // Generate proxy for a video file
+  const generateProxyForMedia = useCallback(async (mediaItem: MediaItem) => {
+    if (!window.electronAPI || mediaItem.type !== 'video' || !proxyEnabled) {
+      return;
+    }
+
+    try {
+      setProxyProgress((prev) => ({ ...prev, [mediaItem.id]: 0 }));
+
+      const result = await window.electronAPI.media.generateProxy(
+        mediaItem.path,
+        mediaItem.id,
+        proxyScale,
+        mediaItem.duration
+      );
+
+      if (result.success && result.proxyPath) {
+        dispatch(updateMediaItem({ id: mediaItem.id, updates: { proxyPath: result.proxyPath } }));
+      }
+
+      // Remove from progress tracking after completion
+      setProxyProgress((prev) => {
+        const next = { ...prev };
+        delete next[mediaItem.id];
+        return next;
+      });
+    } catch (err) {
+      console.error('Failed to generate proxy:', err);
+      setProxyProgress((prev) => {
+        const next = { ...prev };
+        delete next[mediaItem.id];
+        return next;
+      });
+    }
+  }, [dispatch, proxyEnabled, proxyScale]);
+
+  // Regenerate all proxies (delete existing and regenerate)
+  const handleRegenerateProxies = useCallback(async () => {
+    if (!window.electronAPI) return;
+
+    for (const item of media) {
+      if (item.type !== 'video') continue;
+
+      // Delete existing proxy if present
+      if (item.proxyPath) {
+        await window.electronAPI.media.deleteProxy(item.proxyPath);
+        dispatch(updateMediaItem({ id: item.id, updates: { proxyPath: null } }));
+      }
+
+      // Regenerate proxy
+      generateProxyForMedia(item);
+    }
+  }, [media, dispatch, generateProxyForMedia]);
+
+  // Clear all proxies
+  const handleClearProxies = useCallback(async () => {
+    if (!window.electronAPI) return;
+
+    for (const item of media) {
+      if (item.type !== 'video' || !item.proxyPath) continue;
+
+      // Delete proxy file
+      await window.electronAPI.media.deleteProxy(item.proxyPath);
+
+      // Update media item to remove proxy path
+      dispatch(updateMediaItem({ id: item.id, updates: { proxyPath: null } }));
+    }
+  }, [media, dispatch]);
+
+  // Listen for menu events
+  useEffect(() => {
+    if (!window.electronAPI) return;
+
+    const cleanupRegenerate = window.electronAPI.menu.onRegenerateProxies(handleRegenerateProxies);
+    const cleanupClear = window.electronAPI.menu.onClearProxies(handleClearProxies);
+
+    return () => {
+      cleanupRegenerate();
+      cleanupClear();
+    };
+  }, [handleRegenerateProxies, handleClearProxies]);
 
   const handleImport = useCallback(async () => {
     if (!window.electronAPI) {
@@ -71,11 +175,16 @@ const MediaBin = forwardRef<MediaBinHandle>((_props, ref) => {
             console.error('Failed to generate waveform:', err);
           });
         }
+
+        // Generate proxy async for video files (if proxies enabled)
+        if (probeResult.type === 'video') {
+          generateProxyForMedia(mediaItem);
+        }
       } catch (error) {
         console.error('Error importing media:', error);
       }
     }
-  }, [dispatch]);
+  }, [dispatch, generateProxyForMedia]);
 
   // Expose import function to parent via ref
   useImperativeHandle(ref, () => ({
@@ -169,11 +278,16 @@ const MediaBin = forwardRef<MediaBinHandle>((_props, ref) => {
             console.error('Failed to generate waveform:', err);
           });
         }
+
+        // Generate proxy async for video files (if proxies enabled)
+        if (probeResult.type === 'video') {
+          generateProxyForMedia(mediaItem);
+        }
       } catch (error) {
         console.error('Error importing dropped media:', error);
       }
     }
-  }, [dispatch]);
+  }, [dispatch, generateProxyForMedia]);
 
   const formatDuration = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
@@ -218,42 +332,60 @@ const MediaBin = forwardRef<MediaBinHandle>((_props, ref) => {
             <button onClick={handleImport}>Import your first file</button>
           </div>
         ) : (
-          media.map((item) => (
-            <div
-              key={item.id}
-              className="media-item"
-              onDoubleClick={() => dispatch(setSourceMediaId(item.id))}
-            >
-              <div className="media-thumbnail">
-                {item.thumbnailPath ? (
-                  <img src={item.thumbnailPath} alt={item.name} />
-                ) : (
-                  <div className="media-thumbnail-placeholder">
-                    <span>{item.type[0].toUpperCase()}</span>
-                  </div>
-                )}
-              </div>
+          media.map((item) => {
+            const isGeneratingProxy = proxyProgress[item.id] !== undefined;
+            const proxyPercent = proxyProgress[item.id] ?? 0;
+            const hasProxy = !!item.proxyPath;
 
-              <div className="media-info">
-                <div className="media-name" title={item.name}>
-                  {item.name}
+            return (
+              <div
+                key={item.id}
+                className="media-item"
+                onDoubleClick={() => dispatch(setSourceMediaId(item.id))}
+              >
+                <div className="media-thumbnail">
+                  {item.thumbnailPath ? (
+                    <img src={item.thumbnailPath} alt={item.name} />
+                  ) : (
+                    <div className="media-thumbnail-placeholder">
+                      <span>{item.type[0].toUpperCase()}</span>
+                    </div>
+                  )}
+                  {/* Proxy status indicator */}
+                  {item.type === 'video' && (
+                    <div className={`proxy-badge ${hasProxy ? 'ready' : isGeneratingProxy ? 'generating' : 'none'}`}>
+                      {isGeneratingProxy ? `${Math.round(proxyPercent)}%` : hasProxy ? 'P' : ''}
+                    </div>
+                  )}
+                  {/* Proxy progress bar */}
+                  {isGeneratingProxy && (
+                    <div className="proxy-progress-bar">
+                      <div className="proxy-progress-fill" style={{ width: `${proxyPercent}%` }} />
+                    </div>
+                  )}
                 </div>
-                <div className="media-details">
-                  {(item.type === 'video' || item.type === 'image') && item.metadata.width && (
-                    <span>{item.metadata.width}×{item.metadata.height}</span>
-                  )}
-                  {item.type === 'image' ? (
-                    <span>Still</span>
-                  ) : item.duration > 0 && (
-                    <span>{formatDuration(item.duration)}</span>
-                  )}
-                  {item.metadata.fileSize && (
-                    <span>{formatFileSize(item.metadata.fileSize)}</span>
-                  )}
+
+                <div className="media-info">
+                  <div className="media-name" title={item.name}>
+                    {item.name}
+                  </div>
+                  <div className="media-details">
+                    {(item.type === 'video' || item.type === 'image') && item.metadata.width && (
+                      <span>{item.metadata.width}×{item.metadata.height}</span>
+                    )}
+                    {item.type === 'image' ? (
+                      <span>Still</span>
+                    ) : item.duration > 0 && (
+                      <span>{formatDuration(item.duration)}</span>
+                    )}
+                    {item.metadata.fileSize && (
+                      <span>{formatFileSize(item.metadata.fileSize)}</span>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
     </div>

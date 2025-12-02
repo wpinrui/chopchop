@@ -32,6 +32,11 @@ interface ElectronAPI {
       thumbnailDataUrl: string | null;
     }>;
     generateWaveform: (filePath: string) => Promise<number[] | null>;
+    generateProxy: (inputPath: string, mediaId: string, scale: number, duration: number) =>
+      Promise<{ success: boolean; proxyPath: string | null; error?: string }>;
+    cancelProxy: (mediaId: string) => Promise<boolean>;
+    deleteProxy: (proxyPath: string) => Promise<boolean>;
+    onProxyProgress: (callback: (progress: { mediaId: string; percent: number; fps?: number; speed?: string }) => void) => () => void;
   };
 
   file: {
@@ -77,6 +82,9 @@ interface ElectronAPI {
     onExport: (callback: () => void) => () => void;
     onUndo: (callback: () => void) => () => void;
     onRedo: (callback: () => void) => () => void;
+    onResetLayout: (callback: () => void) => () => void;
+    onRegenerateProxies: (callback: () => void) => () => void;
+    onClearProxies: (callback: () => void) => () => void;
   };
 }
 

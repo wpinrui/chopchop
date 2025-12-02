@@ -325,3 +325,118 @@ export async function checkNvencAvailable(): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * Proxy generation progress callback
+ */
+export interface ProxyProgressCallback {
+  (progress: {
+    percent: number;
+    fps?: number;
+    speed?: string;
+  }): void;
+}
+
+// Track active proxy generation processes for cancellation
+const activeProxyProcesses = new Map<string, ChildProcess>();
+
+/**
+ * Generate a proxy file for faster preview playback
+ *
+ * @param inputPath Path to the source video file
+ * @param outputPath Path for the generated proxy file
+ * @param scale Scale factor (0.5 = half resolution, 0.25 = quarter, etc.)
+ * @param duration Total duration in seconds (for progress calculation)
+ * @param onProgress Progress callback
+ * @returns Promise with success/failure and proxy path
+ */
+export async function generateProxy(
+  inputPath: string,
+  outputPath: string,
+  scale: number,
+  duration: number,
+  onProgress?: ProxyProgressCallback
+): Promise<{ success: boolean; proxyPath: string | null; error?: string }> {
+  return new Promise((resolve) => {
+    const ffmpegPath = getFFmpegPath();
+
+    // Build ffmpeg command for fast proxy generation:
+    // - Scale down by the factor
+    // - Use ultrafast preset for speed
+    // - High CRF for very small file size (quality is not critical for preview)
+    // - Low bitrate cap for consistent performance
+    // - Copy audio stream (faster than re-encoding)
+    const args = [
+      '-y', // Overwrite output
+      '-i', inputPath,
+      '-vf', `scale=iw*${scale}:ih*${scale}`,
+      '-c:v', 'libx264',
+      '-preset', 'ultrafast',
+      '-crf', '35', // Higher CRF = lower quality but much faster decoding
+      '-maxrate', '2M', // Cap bitrate for consistent playback
+      '-bufsize', '4M',
+      '-c:a', 'copy', // Copy audio without re-encoding for better sync
+      outputPath
+    ];
+
+    const process = spawn(ffmpegPath, args);
+    activeProxyProcesses.set(outputPath, process);
+
+    let stderr = '';
+
+    process.stderr?.on('data', (data) => {
+      const chunk = data.toString();
+      stderr += chunk;
+
+      // Parse progress
+      if (onProgress && duration > 0) {
+        const progress = parseFFmpegProgress(chunk, duration);
+        if (progress && progress.progress !== undefined) {
+          onProgress({
+            percent: progress.progress,
+            fps: progress.fps,
+            speed: progress.speed,
+          });
+        }
+      }
+    });
+
+    process.on('error', (error) => {
+      activeProxyProcesses.delete(outputPath);
+      resolve({
+        success: false,
+        proxyPath: null,
+        error: error.message,
+      });
+    });
+
+    process.on('close', (code) => {
+      activeProxyProcesses.delete(outputPath);
+      if (code === 0) {
+        resolve({
+          success: true,
+          proxyPath: outputPath,
+        });
+      } else {
+        resolve({
+          success: false,
+          proxyPath: null,
+          error: `FFmpeg exited with code ${code}: ${stderr.slice(-500)}`,
+        });
+      }
+    });
+  });
+}
+
+/**
+ * Cancel an in-progress proxy generation
+ */
+export function cancelProxyGeneration(outputPath: string): boolean {
+  const process = activeProxyProcesses.get(outputPath);
+  if (process) {
+    process.kill('SIGTERM');
+    activeProxyProcesses.delete(outputPath);
+    return true;
+  }
+  return false;
+}

@@ -27,6 +27,15 @@ const electronAPI = {
     showImportDialog: () => ipcRenderer.invoke('media:showImportDialog'),
     probe: (filePath: string) => ipcRenderer.invoke('media:probe', filePath),
     generateWaveform: (filePath: string) => ipcRenderer.invoke('media:generateWaveform', filePath),
+    generateProxy: (inputPath: string, mediaId: string, scale: number, duration: number) =>
+      ipcRenderer.invoke('media:generateProxy', inputPath, mediaId, scale, duration),
+    cancelProxy: (mediaId: string) => ipcRenderer.invoke('media:cancelProxy', mediaId),
+    deleteProxy: (proxyPath: string) => ipcRenderer.invoke('media:deleteProxy', proxyPath),
+    onProxyProgress: (callback: (progress: { mediaId: string; percent: number; fps?: number; speed?: string }) => void) => {
+      const handler = (_event: any, progress: any) => callback(progress);
+      ipcRenderer.on('media:proxyProgress', handler);
+      return () => ipcRenderer.removeListener('media:proxyProgress', handler);
+    },
   },
 
   // File operations
@@ -123,6 +132,14 @@ const electronAPI = {
     onResetLayout: (callback: () => void) => {
       ipcRenderer.on('menu:resetLayout', callback);
       return () => ipcRenderer.removeListener('menu:resetLayout', callback);
+    },
+    onRegenerateProxies: (callback: () => void) => {
+      ipcRenderer.on('menu:regenerateProxies', callback);
+      return () => ipcRenderer.removeListener('menu:regenerateProxies', callback);
+    },
+    onClearProxies: (callback: () => void) => {
+      ipcRenderer.on('menu:clearProxies', callback);
+      return () => ipcRenderer.removeListener('menu:clearProxies', callback);
     },
   },
 };

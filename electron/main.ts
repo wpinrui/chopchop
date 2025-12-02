@@ -7,7 +7,7 @@
 import { app, BrowserWindow, ipcMain, dialog, Menu, shell } from 'electron';
 import path from 'node:path';
 import { probeMediaFile, getMediaDuration, generateThumbnail, getMediaType, generateWaveformData } from './ffmpeg/probe';
-import { checkFFmpegAvailable, getFFmpegVersion, checkNvencAvailable } from './ffmpeg/runner';
+import { checkFFmpegAvailable, getFFmpegVersion, checkNvencAvailable, generateProxy, cancelProxyGeneration } from './ffmpeg/runner';
 import { exportTimeline, cancelExport, type ExportProgress } from './ffmpeg/exporter';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -200,6 +200,20 @@ function createAppMenu() {
         },
       ],
     },
+    // Advanced menu
+    {
+      label: 'Advanced',
+      submenu: [
+        {
+          label: 'Regenerate Proxies',
+          click: () => mainWindow?.webContents.send('menu:regenerateProxies'),
+        },
+        {
+          label: 'Clear All Proxies',
+          click: () => mainWindow?.webContents.send('menu:clearProxies'),
+        },
+      ],
+    },
     // Help menu
     {
       label: 'Help',
@@ -388,6 +402,59 @@ function registerIPCHandlers() {
   // Async waveform generation (called separately after import for non-blocking UX)
   ipcMain.handle('media:generateWaveform', async (_event, filePath: string) => {
     return await generateWaveformData(filePath);
+  });
+
+  // Proxy generation
+  ipcMain.handle('media:generateProxy', async (
+    _event,
+    inputPath: string,
+    mediaId: string,
+    scale: number,
+    duration: number
+  ) => {
+    // Create proxy in a temp directory with mediaId-based name
+    const proxyDir = path.join(app.getPath('userData'), 'proxies');
+    await fs.mkdir(proxyDir, { recursive: true });
+
+    // Use mediaId to ensure unique but consistent proxy file names
+    const proxyFileName = `${mediaId}_proxy.mp4`;
+    const proxyPath = path.join(proxyDir, proxyFileName);
+
+    // Check if proxy already exists
+    try {
+      await fs.access(proxyPath);
+      // Proxy exists, return it directly
+      return { success: true, proxyPath };
+    } catch {
+      // Proxy doesn't exist, generate it
+    }
+
+    const onProgress = (progress: { percent: number; fps?: number; speed?: string }) => {
+      mainWindow?.webContents.send('media:proxyProgress', {
+        mediaId,
+        percent: progress.percent,
+        fps: progress.fps,
+        speed: progress.speed,
+      });
+    };
+
+    const result = await generateProxy(inputPath, proxyPath, scale, duration, onProgress);
+    return result;
+  });
+
+  ipcMain.handle('media:cancelProxy', async (_event, mediaId: string) => {
+    const proxyDir = path.join(app.getPath('userData'), 'proxies');
+    const proxyPath = path.join(proxyDir, `${mediaId}_proxy.mp4`);
+    return cancelProxyGeneration(proxyPath);
+  });
+
+  ipcMain.handle('media:deleteProxy', async (_event, proxyPath: string) => {
+    try {
+      await fs.unlink(proxyPath);
+      return true;
+    } catch {
+      return false;
+    }
   });
 
   // File operations

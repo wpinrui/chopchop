@@ -11,6 +11,7 @@ import SourcePreview from './components/SourcePreview/SourcePreview';
 import ProgramMonitor from './components/ProgramMonitor/ProgramMonitor';
 import SequenceSettings from './components/SequenceSettings/SequenceSettings';
 import ExportDialog from './components/ExportDialog/ExportDialog';
+import ProxyProgressIndicator from './components/ProxyProgressIndicator/ProxyProgressIndicator';
 import { addTrack, loadTimeline } from './store/timelineSlice';
 import { setActivePane } from './store/uiSlice';
 import { loadProject, setProjectPath, markClean, updateMediaItem } from './store/projectSlice';
@@ -609,6 +610,7 @@ const App: React.FC = () => {
           <span className="status-message">{statusMessage}</span>
           {projectDirty && <span className="status-dirty">Modified</span>}
           {projectPath && <span className="status-path">{projectPath}</span>}
+          <ProxyProgressIndicator />
         </div>
       </div>
 

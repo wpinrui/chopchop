@@ -50,6 +50,8 @@ const ProgramMonitor: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  // Track original media dimensions for proxy scaling
+  const originalDimensionsRef = useRef<{ width: number; height: number } | null>(null);
 
   // Container size for calculating canvas display dimensions
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
@@ -66,6 +68,7 @@ const ProgramMonitor: React.FC = () => {
   const sequenceResolution = useSelector((state: RootState) => state.project.settings.resolution);
   const backgroundColor = useSelector((state: RootState) => state.project.settings.backgroundColor);
   const previewQuality = useSelector((state: RootState) => state.project.settings.previewQuality) ?? 1;
+  const proxyEnabled = useSelector((state: RootState) => state.project.settings.proxyEnabled);
   const [fullWidth, fullHeight] = sequenceResolution;
   // Apply preview quality scaling - canvas renders at reduced resolution
   const seqWidth = Math.round(fullWidth * previewQuality);
@@ -136,6 +139,7 @@ const ProgramMonitor: React.FC = () => {
 
   // Draw content onto the canvas, centered, cropped if larger than sequence
   // Source is scaled by previewQuality to match reduced canvas resolution
+  // Uses originalDimensionsRef for proper sizing when using proxy files
   const drawToCanvas = useCallback((source: HTMLVideoElement | HTMLImageElement | null) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -149,9 +153,14 @@ const ProgramMonitor: React.FC = () => {
 
     if (!source) return;
 
-    // Get source dimensions
-    const srcWidth = source instanceof HTMLVideoElement ? source.videoWidth : source.naturalWidth;
-    const srcHeight = source instanceof HTMLVideoElement ? source.videoHeight : source.naturalHeight;
+    // Get source dimensions - use original from ref (for proxy files), otherwise from element
+    const originalDims = originalDimensionsRef.current;
+    const srcWidth = (originalDims?.width && originalDims.width > 0)
+      ? originalDims.width
+      : (source instanceof HTMLVideoElement ? source.videoWidth : source.naturalWidth);
+    const srcHeight = (originalDims?.height && originalDims.height > 0)
+      ? originalDims.height
+      : (source instanceof HTMLVideoElement ? source.videoHeight : source.naturalHeight);
 
     if (srcWidth === 0 || srcHeight === 0) return;
 
@@ -216,6 +225,18 @@ const ProgramMonitor: React.FC = () => {
   }, [tracks, playheadPosition, media]);
 
   const clipAtPlayhead = findClipAtPlayhead();
+
+  // Update original dimensions ref when clip changes (for proxy scaling)
+  useEffect(() => {
+    if (clipAtPlayhead?.media.metadata) {
+      originalDimensionsRef.current = {
+        width: clipAtPlayhead.media.metadata.width || 0,
+        height: clipAtPlayhead.media.metadata.height || 0,
+      };
+    } else {
+      originalDimensionsRef.current = null;
+    }
+  }, [clipAtPlayhead?.media.id, clipAtPlayhead?.media.metadata]);
 
   // Format timecode as HH:MM:SS:FF
   const formatTimecode = useCallback((seconds: number): string => {
@@ -742,8 +763,18 @@ const ProgramMonitor: React.FC = () => {
   }, [timelineDuration, isPlaying, dispatch]);
 
   // Convert file path to file:// URL
-  const mediaSrc = clipAtPlayhead?.media.path
-    ? `file:///${clipAtPlayhead.media.path.replace(/\\/g, '/')}`
+  // Use proxy file if available and proxies are enabled
+  const mediaPath = (() => {
+    if (!clipAtPlayhead?.media) return '';
+    const mediaItem = clipAtPlayhead.media;
+    // Use proxy for video if available and enabled
+    if (mediaItem.type === 'video' && proxyEnabled && mediaItem.proxyPath) {
+      return mediaItem.proxyPath;
+    }
+    return mediaItem.path;
+  })();
+  const mediaSrc = mediaPath
+    ? `file:///${mediaPath.replace(/\\/g, '/')}`
     : '';
 
   const isImage = clipAtPlayhead?.media.type === 'image';
@@ -837,6 +868,13 @@ const ProgramMonitor: React.FC = () => {
           {playbackDirection !== 0 && (
             <span className="playback-speed">{playbackSpeed}x</span>
           )}
+          <button
+            className={`proxy-toggle ${proxyEnabled ? 'active' : ''}`}
+            onClick={() => dispatch(updateSettings({ proxyEnabled: !proxyEnabled }))}
+            title={proxyEnabled ? 'Using proxy files for faster playback' : 'Using original files (may be slower)'}
+          >
+            Proxy
+          </button>
           <span className="preview-quality-label">Quality:</span>
           <select
             className="preview-quality-select"

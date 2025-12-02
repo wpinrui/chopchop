@@ -126,6 +126,7 @@
 }
 
 .media-thumbnail {
+  position: relative;
   width: 64px;
   height: 36px;
   flex-shrink: 0;
@@ -138,6 +139,46 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+/* Proxy status badge */
+.proxy-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  padding: 1px 4px;
+  font-size: 9px;
+  font-weight: 600;
+  border-radius: 2px;
+  color: #fff;
+}
+
+.proxy-badge.ready {
+  background-color: rgba(46, 204, 113, 0.9);
+}
+
+.proxy-badge.generating {
+  background-color: rgba(241, 196, 15, 0.9);
+}
+
+.proxy-badge.none {
+  display: none;
+}
+
+/* Proxy progress bar */
+.proxy-progress-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background-color: rgba(0, 0, 0, 0.5);
+}
+
+.proxy-progress-fill {
+  height: 100%;
+  background-color: var(--accent-blue);
+  transition: width 0.2s ease-out;
 }
 
 .media-thumbnail-placeholder {
