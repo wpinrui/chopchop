@@ -98,7 +98,8 @@ const ProgramMonitor: React.FC = () => {
   const [playbackDirection, setPlaybackDirection] = useState<-1 | 0 | 1>(0);
   const [videoError, setVideoError] = useState<string | null>(null);
   const [showLoadingDialog, setShowLoadingDialog] = useState(false);
-  const [usePreviewPlayback, setUsePreviewPlayback] = useState(true);
+  // Preview playback is always enabled - unified pipeline handles everything
+  const usePreviewPlayback = true;
 
   // Ref for preview video element (single low-bitrate preview file)
   const previewVideoRef = useRef<HTMLVideoElement>(null);
@@ -288,6 +289,25 @@ const ProgramMonitor: React.FC = () => {
   useEffect(() => {
     if (isPlaying) return; // Don't redraw while playing - the animation loop handles it
 
+    // When preview mode is active and preview is ready, draw from preview video
+    if (usePreviewPlayback && previewReady && previewVideoRef.current) {
+      const previewVideo = previewVideoRef.current;
+      // Seek to playhead position and draw
+      previewVideo.currentTime = playheadPosition;
+      // Wait for seek to complete before drawing
+      const handleSeeked = () => {
+        drawToCanvas(previewVideo);
+        previewVideo.removeEventListener('seeked', handleSeeked);
+      };
+      previewVideo.addEventListener('seeked', handleSeeked);
+      // Also try drawing immediately if already at correct position
+      if (Math.abs(previewVideo.currentTime - playheadPosition) < 0.05) {
+        drawToCanvas(previewVideo);
+      }
+      return;
+    }
+
+    // Legacy mode: draw from individual clips
     if (!clipAtPlayhead) {
       // No clip at playhead - show background
       clearCanvas();
@@ -307,7 +327,7 @@ const ProgramMonitor: React.FC = () => {
         drawToCanvas(video);
       }
     }
-  }, [clipAtPlayhead, isPlaying, drawToCanvas, clearCanvas]);
+  }, [clipAtPlayhead, isPlaying, drawToCanvas, clearCanvas, usePreviewPlayback, previewReady, playheadPosition]);
 
   // Handle image load
   useEffect(() => {
@@ -428,14 +448,14 @@ const ProgramMonitor: React.FC = () => {
 
       dispatch(setPlayheadPosition(currentPlayhead));
 
-      // If using pre-rendered preview, draw from that instead of individual clips
+      // If using pre-rendered preview, video plays directly (no canvas draw needed)
       if (usePreviewPlayback && previewReady && previewVideoRef.current) {
         const previewVideo = previewVideoRef.current;
-        // Sync preview video time with playhead (it should be playing, but ensure sync)
+        // Just sync playhead with video time - video displays itself, no canvas drawing
         if (Math.abs(previewVideo.currentTime - currentPlayhead) > 0.2) {
           previewVideo.currentTime = currentPlayhead;
         }
-        drawToCanvas(previewVideo);
+        // Skip drawToCanvas - video element is shown directly for performance
         animationFrameRef.current = requestAnimationFrame(updatePlayback);
         return;
       }
@@ -526,12 +546,12 @@ const ProgramMonitor: React.FC = () => {
 
       dispatch(setPlayheadPosition(currentPlayhead));
 
-      // If using pre-rendered preview, draw from that instead of individual clips
+      // If using pre-rendered preview, video displays directly (no canvas draw needed)
       if (usePreviewPlayback && previewReady && previewVideoRef.current) {
         const previewVideo = previewVideoRef.current;
-        // Seek preview video to current playhead position
+        // Just seek the video - it displays itself, no canvas drawing
         previewVideo.currentTime = currentPlayhead;
-        drawToCanvas(previewVideo);
+        // Skip drawToCanvas - video element is shown directly for performance
         animationFrameRef.current = requestAnimationFrame(updateReverse);
         return;
       }
@@ -924,6 +944,7 @@ const ProgramMonitor: React.FC = () => {
     <div className="program-monitor" onClick={handlePaneClick}>
       <div className="program-video-container" ref={containerRef}>
         {/* Canvas for composited output at sequence resolution */}
+        {/* Hidden when playing pre-rendered preview (video shown directly instead) */}
         <canvas
           ref={canvasRef}
           width={seqWidth}
@@ -932,6 +953,7 @@ const ProgramMonitor: React.FC = () => {
           style={{
             width: canvasDisplaySize.width,
             height: canvasDisplaySize.height,
+            display: (isPlaying && usePreviewPlayback && previewReady) ? 'none' : 'block',
           }}
         />
 
@@ -954,13 +976,13 @@ const ProgramMonitor: React.FC = () => {
           alt=""
         />
 
-        {/* Hidden preview video element for pre-rendered timeline playback */}
+        {/* Preview video element - shown directly during playback for performance */}
         {previewSrc && (
           <video
             key={previewSrc}
             ref={previewVideoRef}
             src={previewSrc}
-            className="program-hidden-source"
+            className={(isPlaying && usePreviewPlayback && previewReady) ? 'program-preview-video' : 'program-hidden-source'}
             muted={isMuted}
           />
         )}
@@ -1051,21 +1073,6 @@ const ProgramMonitor: React.FC = () => {
               {renderProgress.toFixed(1)}%
             </span>
           )}
-          {/* Preview playback toggle */}
-          <button
-            className={`chunk-toggle ${usePreviewPlayback ? 'active' : ''}`}
-            onClick={() => setUsePreviewPlayback(!usePreviewPlayback)}
-            title={usePreviewPlayback ? 'Using pre-rendered preview (composited)' : 'Using individual clips (legacy mode)'}
-          >
-            {usePreviewPlayback ? 'Render' : 'Live'}
-          </button>
-          <button
-            className={`proxy-toggle ${proxyEnabled ? 'active' : ''}`}
-            onClick={() => dispatch(updateSettings({ proxyEnabled: !proxyEnabled }))}
-            title={proxyEnabled ? 'Using proxy files for faster playback' : 'Using original files (may be slower)'}
-          >
-            Proxy
-          </button>
           <span className="preview-quality-label">Quality:</span>
           <select
             className="preview-quality-select"

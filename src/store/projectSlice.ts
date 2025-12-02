@@ -84,6 +84,18 @@ const projectSlice = createSlice({
       }
     },
 
+    // Convenience action for setting proxy path on a media item
+    setMediaProxy: (
+      state,
+      action: PayloadAction<{ mediaId: string; proxyPath: string }>
+    ) => {
+      const item = state.media.find((m) => m.id === action.payload.mediaId);
+      if (item) {
+        item.proxyPath = action.payload.proxyPath;
+        state.dirty = true;
+      }
+    },
+
     // Load/reset
     loadProject: (_state, action: PayloadAction<Project>) => {
       return { ...action.payload, dirty: false };
@@ -105,6 +117,7 @@ export const {
   addMediaItem,
   removeMediaItem,
   updateMediaItem,
+  setMediaProxy,
   loadProject,
   resetProject,
 } = projectSlice.actions;

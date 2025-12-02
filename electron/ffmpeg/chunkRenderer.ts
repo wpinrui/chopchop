@@ -136,7 +136,6 @@ export async function renderChunk(
     media,
     settings,
     outputDir,
-    useProxies,
   } = options;
 
   const chunkDuration = endTime - startTime;
@@ -165,8 +164,8 @@ export async function renderChunk(
       return mediaIndexMap.get(mediaItem.id)!;
     }
     // Use proxy if enabled and available
-    const mediaPath =
-      useProxies && mediaItem.proxyPath ? mediaItem.proxyPath : mediaItem.path;
+    // Always use proxy when available for faster preview rendering
+    const mediaPath = mediaItem.proxyPath || mediaItem.path;
     const idx = inputs.length;
     inputs.push({ path: mediaPath, mediaId: mediaItem.id, index: idx });
     mediaIndexMap.set(mediaItem.id, idx);
@@ -617,9 +616,15 @@ let activePreviewProcess: ChildProcess | null = null;
 
 /**
  * Render the entire timeline as a single low-bitrate preview video.
- * Uses aggressive compression for fast encoding:
+ *
+ * Uses an efficient concat-based approach:
+ * - Each track is rendered as a concat of clips + black gaps
+ * - Tracks are then overlaid on top of each other (only T overlays for T tracks)
+ * - This is MUCH faster than the old approach of N overlays with enable expressions
+ *
+ * Compression settings:
  * - 1/2 resolution
- * - CRF 35 (very high compression)
+ * - CRF 32 (good balance of quality and speed)
  * - ultrafast preset
  * - Low audio bitrate
  */
@@ -627,7 +632,8 @@ export async function renderFullPreview(
   options: FullPreviewOptions,
   onProgress?: (progress: FullPreviewProgress) => void
 ): Promise<FullPreviewResult> {
-  const { timeline, media, settings, duration, useProxies } = options;
+  const { timeline, media, settings, duration } = options;
+  // Note: useProxies option is ignored - preview ALWAYS uses proxies when available
 
   const outputDir = getChunkOutputDir();
   const outputPath = path.join(outputDir, `preview-${Date.now()}.mp4`);
@@ -643,7 +649,7 @@ export async function renderFullPreview(
   const height = Math.round(fullHeight / 2);
   const fps = settings.frameRate;
 
-  // Get video and audio tracks
+  // Get video and audio tracks (video tracks reversed so higher tracks overlay lower)
   const videoTracks = timeline.tracks
     .filter((t) => t.type === 'video' && t.visible !== false)
     .reverse();
@@ -659,33 +665,46 @@ export async function renderFullPreview(
     if (mediaIndexMap.has(mediaItem.id)) {
       return mediaIndexMap.get(mediaItem.id)!;
     }
-    const mediaPath =
-      useProxies && mediaItem.proxyPath ? mediaItem.proxyPath : mediaItem.path;
+    // Always use proxy when available for faster preview rendering
+    const mediaPath = mediaItem.proxyPath || mediaItem.path;
     const idx = inputs.length;
     inputs.push({ path: mediaPath, mediaId: mediaItem.id, index: idx });
     mediaIndexMap.set(mediaItem.id, idx);
     return idx;
   };
 
-  // Gather all clips
+  // Gather clips per track for efficient processing
   interface ResolvedClip {
     clip: Clip;
     media: MediaItem;
     inputIndex: number;
-    trackIndex?: number;
   }
 
-  const videoClips: ResolvedClip[] = [];
+  interface TrackClips {
+    trackIndex: number;
+    clips: ResolvedClip[];
+  }
+
+  const videoTrackClips: TrackClips[] = [];
   const audioClips: ResolvedClip[] = [];
 
   for (let trackIdx = 0; trackIdx < videoTracks.length; trackIdx++) {
     const track = videoTracks[trackIdx];
+    const trackClips: ResolvedClip[] = [];
+
     for (const clip of track.clips) {
       if (!clip.enabled) continue;
       const mediaItem = media.find((m) => m.id === clip.mediaId);
       if (!mediaItem) continue;
       const inputIndex = getMediaInput(mediaItem);
-      videoClips.push({ clip, media: mediaItem, inputIndex, trackIndex: trackIdx });
+      trackClips.push({ clip, media: mediaItem, inputIndex });
+    }
+
+    // Sort clips by timeline position
+    trackClips.sort((a, b) => a.clip.timelineStart - b.clip.timelineStart);
+
+    if (trackClips.length > 0) {
+      videoTrackClips.push({ trackIndex: trackIdx, clips: trackClips });
     }
   }
 
@@ -700,116 +719,212 @@ export async function renderFullPreview(
   }
 
   // Handle empty timeline
-  if (videoClips.length === 0 && audioClips.length === 0) {
+  if (videoTrackClips.length === 0 && audioClips.length === 0) {
     return generateBlackPreview(outputPath, duration, width, height, fps);
   }
 
-  // Build filter complex
+  // Build filter complex using efficient concat-per-track approach
   const filterParts: string[] = [];
+  const trackOutputLabels: string[] = [];
+  let segmentCounter = 0;
 
-  // Black base canvas
-  filterParts.push(
-    `color=c=black:s=${width}x${height}:r=${fps}:d=${duration}[base]`
-  );
+  // Process each video track: create concat of clips + gaps
+  for (let tIdx = 0; tIdx < videoTrackClips.length; tIdx++) {
+    const { clips } = videoTrackClips[tIdx];
+    const segmentLabels: string[] = [];
+    let currentTime = 0;
 
-  let currentBase = 'base';
-  let videoOutputCount = 0;
+    for (const { clip, media: mediaItem, inputIndex } of clips) {
+      // Add black gap before this clip if needed
+      if (clip.timelineStart > currentTime) {
+        const gapDuration = clip.timelineStart - currentTime;
+        const gapLabel = `gap${segmentCounter}`;
+        filterParts.push(
+          `color=c=black:s=${width}x${height}:r=${fps}:d=${gapDuration},format=yuv420p[${gapLabel}]`
+        );
+        segmentLabels.push(`[${gapLabel}]`);
+        segmentCounter++;
+      }
 
-  // Process video clips
-  for (const { clip, media: mediaItem, inputIndex } of videoClips) {
-    const clipEnd = clip.timelineStart + clip.duration;
-    const clipLabel = `clip${videoOutputCount}`;
-    const overlayLabel = `comp${videoOutputCount}`;
+      // Add the clip
+      const clipLabel = `seg${segmentCounter}`;
+      if (mediaItem.type === 'image') {
+        filterParts.push(
+          `[${inputIndex}:v]loop=loop=-1:size=1,` +
+            `trim=0:${clip.duration},setpts=PTS-STARTPTS,` +
+            `scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
+            `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black,` +
+            `fps=${fps},format=yuv420p[${clipLabel}]`
+        );
+      } else {
+        filterParts.push(
+          `[${inputIndex}:v]trim=start=${clip.mediaIn}:end=${clip.mediaOut},` +
+            `setpts=PTS-STARTPTS,` +
+            `scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
+            `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black,` +
+            `fps=${fps},format=yuv420p[${clipLabel}]`
+        );
+      }
+      segmentLabels.push(`[${clipLabel}]`);
+      segmentCounter++;
 
-    if (mediaItem.type === 'image') {
+      currentTime = clip.timelineStart + clip.duration;
+    }
+
+    // Add trailing gap if track doesn't reach end of timeline
+    if (currentTime < duration) {
+      const gapDuration = duration - currentTime;
+      const gapLabel = `gap${segmentCounter}`;
       filterParts.push(
-        `[${inputIndex}:v]loop=loop=-1:size=1,` +
-          `trim=0:${clip.duration},setpts=PTS-STARTPTS,` +
-          `scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
-          `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black,` +
-          `format=yuva420p[${clipLabel}]`
+        `color=c=black:s=${width}x${height}:r=${fps}:d=${gapDuration},format=yuv420p[${gapLabel}]`
+      );
+      segmentLabels.push(`[${gapLabel}]`);
+      segmentCounter++;
+    }
+
+    // Concat all segments for this track
+    const trackLabel = `track${tIdx}`;
+    if (segmentLabels.length === 1) {
+      // Only one segment - just rename it
+      const lastFilter = filterParts[filterParts.length - 1];
+      filterParts[filterParts.length - 1] = lastFilter.replace(
+        /\[[^\]]+\]$/,
+        `[${trackLabel}]`
       );
     } else {
       filterParts.push(
-        `[${inputIndex}:v]trim=start=${clip.mediaIn}:end=${clip.mediaOut},` +
-          `setpts=PTS-STARTPTS,` +
-          `scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
-          `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black,` +
-          `fps=${fps},format=yuva420p[${clipLabel}]`
+        `${segmentLabels.join('')}concat=n=${segmentLabels.length}:v=1:a=0[${trackLabel}]`
       );
     }
-
-    const enableExpr = `between(t,${clip.timelineStart},${clipEnd})`;
-    filterParts.push(
-      `[${currentBase}][${clipLabel}]overlay=x=0:y=0:enable='${enableExpr}'[${overlayLabel}]`
-    );
-
-    currentBase = overlayLabel;
-    videoOutputCount++;
+    trackOutputLabels.push(trackLabel);
   }
 
-  // Finalize video output
-  if (videoOutputCount > 0) {
-    filterParts[filterParts.length - 1] = filterParts[filterParts.length - 1].replace(
-      `[${currentBase}]`,
+  // Stack tracks using overlay (only T overlays for T tracks - much more efficient!)
+  let currentBase: string;
+  if (trackOutputLabels.length === 0) {
+    // No video tracks - generate black
+    filterParts.push(
+      `color=c=black:s=${width}x${height}:r=${fps}:d=${duration},format=yuv420p[vout]`
+    );
+    currentBase = 'vout';
+  } else if (trackOutputLabels.length === 1) {
+    // Single track - just use it directly
+    const lastFilter = filterParts[filterParts.length - 1];
+    filterParts[filterParts.length - 1] = lastFilter.replace(
+      /\[[^\]]+\]$/,
       '[vout]'
     );
+    currentBase = 'vout';
   } else {
-    filterParts.push(`[base]null[vout]`);
+    // Multiple tracks - overlay them
+    // First track is the base
+    currentBase = trackOutputLabels[0];
+
+    for (let i = 1; i < trackOutputLabels.length; i++) {
+      const overlayLabel = i === trackOutputLabels.length - 1 ? 'vout' : `ovr${i}`;
+      // Use format=yuva420p on overlay input for proper alpha handling
+      filterParts.push(
+        `[${currentBase}][${trackOutputLabels[i]}]overlay=format=auto[${overlayLabel}]`
+      );
+      currentBase = overlayLabel;
+    }
   }
 
-  // Process audio clips
-  const audioLabels: string[] = [];
+  // Process audio using concat approach (same as video) for proper timestamps
+  // Sort audio clips by timeline position
+  const sortedAudioClips = [...audioClips].sort(
+    (a, b) => a.clip.timelineStart - b.clip.timelineStart
+  );
 
-  for (let i = 0; i < audioClips.length; i++) {
-    const { clip, inputIndex } = audioClips[i];
-    const clipEnd = clip.timelineStart + clip.duration;
-    const audioLabel = `aud${i}`;
-
-    filterParts.push(
-      `[${inputIndex}:a]atrim=start=${clip.mediaIn}:end=${clip.mediaOut},` +
-        `asetpts=PTS-STARTPTS,` +
-        `adelay=${Math.round(clip.timelineStart * 1000)}|${Math.round(clip.timelineStart * 1000)},` +
-        `apad=whole_dur=${duration}[${audioLabel}]`
-    );
-
-    audioLabels.push(`[${audioLabel}]`);
-  }
-
-  // Mix audio
-  if (audioLabels.length > 1) {
-    filterParts.push(
-      `${audioLabels.join('')}amix=inputs=${audioLabels.length}:duration=first:dropout_transition=0[aout]`
-    );
-  } else if (audioLabels.length === 1) {
-    filterParts[filterParts.length - 1] = filterParts[filterParts.length - 1].replace(
-      /\[aud0\]$/,
-      '[aout]'
-    );
-  } else {
+  if (sortedAudioClips.length === 0) {
+    // No audio - generate silence
     filterParts.push(`anullsrc=r=48000:cl=stereo,atrim=0:${duration}[aout]`);
+  } else {
+    const audioSegmentLabels: string[] = [];
+    let audioSegmentCounter = 0;
+    let currentAudioTime = 0;
+
+    for (const { clip, inputIndex } of sortedAudioClips) {
+      // Add silence gap before this clip if needed
+      if (clip.timelineStart > currentAudioTime) {
+        const gapDuration = clip.timelineStart - currentAudioTime;
+        const gapLabel = `asil${audioSegmentCounter}`;
+        filterParts.push(
+          `anullsrc=r=48000:cl=stereo,atrim=0:${gapDuration}[${gapLabel}]`
+        );
+        audioSegmentLabels.push(`[${gapLabel}]`);
+        audioSegmentCounter++;
+      }
+
+      // Add the audio clip
+      const audioLabel = `aseg${audioSegmentCounter}`;
+      filterParts.push(
+        `[${inputIndex}:a]atrim=start=${clip.mediaIn}:end=${clip.mediaOut},` +
+          `asetpts=PTS-STARTPTS[${audioLabel}]`
+      );
+      audioSegmentLabels.push(`[${audioLabel}]`);
+      audioSegmentCounter++;
+
+      currentAudioTime = clip.timelineStart + clip.duration;
+    }
+
+    // Add trailing silence if audio doesn't reach end of timeline
+    if (currentAudioTime < duration) {
+      const gapDuration = duration - currentAudioTime;
+      const gapLabel = `asil${audioSegmentCounter}`;
+      filterParts.push(
+        `anullsrc=r=48000:cl=stereo,atrim=0:${gapDuration}[${gapLabel}]`
+      );
+      audioSegmentLabels.push(`[${gapLabel}]`);
+      audioSegmentCounter++;
+    }
+
+    // Concat all audio segments
+    if (audioSegmentLabels.length === 1) {
+      // Only one segment - rename it
+      const lastFilter = filterParts[filterParts.length - 1];
+      filterParts[filterParts.length - 1] = lastFilter.replace(
+        /\[[^\]]+\]$/,
+        '[aout]'
+      );
+    } else {
+      filterParts.push(
+        `${audioSegmentLabels.join('')}concat=n=${audioSegmentLabels.length}:v=0:a=1[aout]`
+      );
+    }
   }
 
   const filterComplex = filterParts.join(';\n');
 
-  // Build ffmpeg args with aggressive compression
+  // Debug: log filter complex
+  console.log('[Preview] Filter complex:', filterComplex);
+  console.log('[Preview] Inputs:', inputs.map(i => i.path));
+
+  // Build ffmpeg args with optimized compression
   const args: string[] = ['-y'];
 
+  // Add inputs with hardware acceleration hint for each
   for (const input of inputs) {
+    // Try hardware acceleration for decoding (helps a lot with AV1/HEVC)
+    args.push('-hwaccel', 'auto');
     args.push('-i', input.path);
   }
+
+  // Use all CPU threads
+  args.push('-threads', '0');
 
   args.push('-filter_complex', filterComplex);
   args.push('-map', '[vout]');
   args.push('-map', '[aout]');
 
-  // Aggressive compression settings for fast preview
+  // Optimized compression settings for fast preview
   args.push('-c:v', 'libx264');
   args.push('-preset', 'ultrafast');
-  args.push('-crf', '35'); // High compression, lower quality
+  args.push('-crf', '32'); // Slightly better quality than before
   args.push('-tune', 'fastdecode'); // Optimize for fast playback
+  args.push('-g', String(fps * 2)); // Keyframe every 2 seconds for better seeking
   args.push('-c:a', 'aac');
-  args.push('-b:a', '64k'); // Low audio bitrate
+  args.push('-b:a', '96k'); // Slightly better audio
   args.push('-t', String(duration));
   args.push(outputPath);
 
@@ -823,6 +938,9 @@ export async function renderFullPreview(
     process.stderr?.on('data', (data) => {
       const chunk = data.toString();
       stderr += chunk;
+
+      // Debug: log ffmpeg output
+      console.log('[Preview ffmpeg]', chunk);
 
       if (onProgress) {
         const progress = parseProgress(chunk, duration);
@@ -847,11 +965,14 @@ export async function renderFullPreview(
     process.on('close', (code) => {
       activePreviewProcess = null;
       if (code === 0) {
+        console.log('[Preview] Render complete:', outputPath);
         resolve({
           success: true,
           filePath: outputPath,
         });
       } else {
+        console.error('[Preview] FFmpeg failed with code', code);
+        console.error('[Preview] Last 1000 chars of stderr:', stderr.slice(-1000));
         resolve({
           success: false,
           filePath: null,
@@ -935,4 +1056,232 @@ export function cancelPreviewRender(): boolean {
     return true;
   }
   return false;
+}
+
+// ============================================================================
+// UNIFIED PREVIEW PIPELINE
+// Generates missing proxies + renders preview in one streamlined process
+// ============================================================================
+
+export interface PipelineProgress {
+  phase: 'proxy' | 'render';
+  overallPercent: number;
+  currentTask: string;
+  phasePercent: number;
+}
+
+export interface PipelineOptions {
+  timeline: Timeline;
+  media: MediaItem[];
+  settings: ProjectSettings;
+  duration: number;
+  proxyScale?: number; // Default 0.5 (half resolution)
+}
+
+export interface PipelineResult {
+  success: boolean;
+  filePath: string | null;
+  generatedProxies: string[]; // Media IDs that got new proxies
+  error?: string;
+}
+
+// Track active pipeline for cancellation
+let pipelineCancelled = false;
+
+/**
+ * Run the unified preview pipeline:
+ * 1. Generate proxies for any clips that don't have them
+ * 2. Render the full preview using proxies
+ *
+ * Reports unified progress throughout both phases.
+ */
+export async function runPreviewPipeline(
+  options: PipelineOptions,
+  onProgress?: (progress: PipelineProgress) => void,
+  onProxyGenerated?: (mediaId: string, proxyPath: string) => void
+): Promise<PipelineResult> {
+  const { timeline, media, settings, duration, proxyScale = 0.5 } = options;
+  pipelineCancelled = false;
+
+  // Step 1: Find clips that need proxies
+  const clipsNeedingProxies: MediaItem[] = [];
+  const usedMediaIds = new Set<string>();
+
+  // Collect all media IDs used in timeline
+  for (const track of timeline.tracks) {
+    for (const clip of track.clips) {
+      if (clip.enabled && clip.mediaId) {
+        usedMediaIds.add(clip.mediaId);
+      }
+    }
+  }
+
+  // Find media items that are used and don't have proxies
+  for (const mediaId of usedMediaIds) {
+    const mediaItem = media.find((m) => m.id === mediaId);
+    if (mediaItem && mediaItem.type === 'video' && !mediaItem.proxyPath) {
+      clipsNeedingProxies.push(mediaItem);
+    }
+  }
+
+  const totalProxies = clipsNeedingProxies.length;
+  const generatedProxies: string[] = [];
+
+  // Calculate weight: proxy generation is typically slower, give it 70% of progress
+  const proxyWeight = totalProxies > 0 ? 0.7 : 0;
+  const renderWeight = 1 - proxyWeight;
+
+  // Step 2: Generate missing proxies
+  if (totalProxies > 0) {
+    const proxyDir = getChunkOutputDir();
+
+    for (let i = 0; i < clipsNeedingProxies.length; i++) {
+      if (pipelineCancelled) {
+        return { success: false, filePath: null, generatedProxies, error: 'Cancelled' };
+      }
+
+      const mediaItem = clipsNeedingProxies[i];
+      const proxyFileName = `proxy-${mediaItem.id}-${Date.now()}.mp4`;
+      const proxyPath = path.join(proxyDir, proxyFileName);
+
+      onProgress?.({
+        phase: 'proxy',
+        overallPercent: (i / totalProxies) * proxyWeight * 100,
+        currentTask: `Generating proxy: ${mediaItem.name}`,
+        phasePercent: (i / totalProxies) * 100,
+      });
+
+      // Generate proxy using ffmpeg
+      const proxyResult = await generateProxyForMedia(
+        mediaItem.path,
+        proxyPath,
+        proxyScale,
+        mediaItem.duration,
+        (percent) => {
+          const proxyProgress = (i + percent / 100) / totalProxies;
+          onProgress?.({
+            phase: 'proxy',
+            overallPercent: proxyProgress * proxyWeight * 100,
+            currentTask: `Generating proxy: ${mediaItem.name}`,
+            phasePercent: proxyProgress * 100,
+          });
+        }
+      );
+
+      if (proxyResult.success && proxyResult.proxyPath) {
+        generatedProxies.push(mediaItem.id);
+        // Notify that proxy was generated so it can be saved to Redux
+        onProxyGenerated?.(mediaItem.id, proxyResult.proxyPath);
+        // Update media item for the render step
+        mediaItem.proxyPath = proxyResult.proxyPath;
+      }
+    }
+  }
+
+  if (pipelineCancelled) {
+    return { success: false, filePath: null, generatedProxies, error: 'Cancelled' };
+  }
+
+  // Step 3: Render the full preview
+  onProgress?.({
+    phase: 'render',
+    overallPercent: proxyWeight * 100,
+    currentTask: 'Rendering preview...',
+    phasePercent: 0,
+  });
+
+  const renderResult = await renderFullPreview(
+    { timeline, media, settings, duration, useProxies: true },
+    (renderProgress) => {
+      onProgress?.({
+        phase: 'render',
+        overallPercent: proxyWeight * 100 + renderProgress.percent * renderWeight,
+        currentTask: 'Rendering preview...',
+        phasePercent: renderProgress.percent,
+      });
+    }
+  );
+
+  if (renderResult.success) {
+    onProgress?.({
+      phase: 'render',
+      overallPercent: 100,
+      currentTask: 'Complete',
+      phasePercent: 100,
+    });
+  }
+
+  return {
+    success: renderResult.success,
+    filePath: renderResult.filePath,
+    generatedProxies,
+    error: renderResult.error,
+  };
+}
+
+/**
+ * Generate proxy for a single media file
+ */
+async function generateProxyForMedia(
+  inputPath: string,
+  outputPath: string,
+  scale: number,
+  duration: number,
+  onProgress?: (percent: number) => void
+): Promise<{ success: boolean; proxyPath: string | null; error?: string }> {
+  return new Promise((resolve) => {
+    const ffmpegPath = getFFmpegPath();
+
+    const args = [
+      '-y',
+      '-hwaccel', 'auto',
+      '-i', inputPath,
+      '-vf', `scale=iw*${scale}:ih*${scale}`,
+      '-c:v', 'libx264',
+      '-preset', 'ultrafast',
+      '-crf', '28',
+      '-c:a', 'aac',
+      '-b:a', '128k',
+      outputPath,
+    ];
+
+    const process = spawn(ffmpegPath, args);
+    let stderr = '';
+
+    process.stderr?.on('data', (data) => {
+      const chunk = data.toString();
+      stderr += chunk;
+
+      if (onProgress && duration > 0) {
+        const progress = parseProgress(chunk, duration);
+        if (progress) {
+          onProgress(progress.percent);
+        }
+      }
+    });
+
+    process.on('error', (error) => {
+      resolve({ success: false, proxyPath: null, error: error.message });
+    });
+
+    process.on('close', (code) => {
+      if (code === 0) {
+        resolve({ success: true, proxyPath: outputPath });
+      } else {
+        resolve({
+          success: false,
+          proxyPath: null,
+          error: `FFmpeg exited with code ${code}`,
+        });
+      }
+    });
+  });
+}
+
+/**
+ * Cancel the current pipeline
+ */
+export function cancelPipeline(): void {
+  pipelineCancelled = true;
+  cancelPreviewRender();
 }

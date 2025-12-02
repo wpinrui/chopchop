@@ -101,6 +101,25 @@ const electronAPI = {
       ipcRenderer.on('preview:previewProgress', handler);
       return () => ipcRenderer.removeListener('preview:previewProgress', handler);
     },
+    // Unified pipeline (proxy generation + preview rendering)
+    runPipeline: (options: {
+      timeline: any;
+      media: any[];
+      settings: any;
+      duration: number;
+      proxyScale?: number;
+    }) => ipcRenderer.invoke('preview:runPipeline', options),
+    cancelPipeline: () => ipcRenderer.invoke('preview:cancelPipeline'),
+    onPipelineProgress: (callback: (progress: { phase: 'proxy' | 'render'; overallPercent: number; currentTask: string; phasePercent: number }) => void) => {
+      const handler = (_event: any, progress: any) => callback(progress);
+      ipcRenderer.on('preview:pipelineProgress', handler);
+      return () => ipcRenderer.removeListener('preview:pipelineProgress', handler);
+    },
+    onProxyGenerated: (callback: (data: { mediaId: string; proxyPath: string }) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('preview:proxyGenerated', handler);
+      return () => ipcRenderer.removeListener('preview:proxyGenerated', handler);
+    },
   },
 
   // App settings

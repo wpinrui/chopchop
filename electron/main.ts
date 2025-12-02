@@ -9,7 +9,7 @@ import path from 'node:path';
 import { probeMediaFile, getMediaDuration, generateThumbnail, getMediaType, generateWaveformData } from './ffmpeg/probe';
 import { checkFFmpegAvailable, getFFmpegVersion, checkNvencAvailable, generateProxy, cancelProxyGeneration } from './ffmpeg/runner';
 import { exportTimeline, cancelExport, type ExportProgress } from './ffmpeg/exporter';
-import { renderChunk, cancelChunkRender, cancelAllChunkRenders, getChunkOutputDir, clearChunkCache, renderFullPreview, cancelPreviewRender } from './ffmpeg/chunkRenderer';
+import { renderChunk, cancelChunkRender, cancelAllChunkRenders, getChunkOutputDir, clearChunkCache, renderFullPreview, cancelPreviewRender, runPreviewPipeline, cancelPipeline, type PipelineProgress } from './ffmpeg/chunkRenderer';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 
@@ -633,6 +633,32 @@ function registerIPCHandlers() {
 
   ipcMain.handle('preview:cancelPreview', async () => {
     cancelPreviewRender();
+  });
+
+  // Unified preview pipeline (proxy generation + preview rendering)
+  ipcMain.handle('preview:runPipeline', async (
+    _event,
+    options: {
+      timeline: any;
+      media: any[];
+      settings: any;
+      duration: number;
+      proxyScale?: number;
+    }
+  ) => {
+    const onProgress = (progress: PipelineProgress) => {
+      mainWindow?.webContents.send('preview:pipelineProgress', progress);
+    };
+
+    const onProxyGenerated = (mediaId: string, proxyPath: string) => {
+      mainWindow?.webContents.send('preview:proxyGenerated', { mediaId, proxyPath });
+    };
+
+    return await runPreviewPipeline(options, onProgress, onProxyGenerated);
+  });
+
+  ipcMain.handle('preview:cancelPipeline', async () => {
+    cancelPipeline();
   });
 }
 

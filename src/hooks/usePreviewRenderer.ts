@@ -1,12 +1,13 @@
 /**
  * Preview Renderer Hook
  *
- * Manages background rendering of a single low-bitrate preview video
- * of the entire timeline. Much simpler than chunk-based rendering.
+ * Manages the unified preview pipeline that:
+ * 1. Generates proxies for any clips that don't have them
+ * 2. Renders a single low-bitrate preview video of the entire timeline
  *
- * - Renders entire timeline as one video when edits are made (debounced)
+ * - Automatically triggers when edits are made (debounced)
  * - Uses aggressive compression for fast encoding
- * - Scales down resolution for preview quality
+ * - Reports unified progress via PreviewPipelineIndicator
  */
 
 import { useEffect, useRef, useCallback, useMemo } from 'react';
@@ -25,7 +26,7 @@ import {
 const DEBOUNCE_TIME = 1000;
 
 /**
- * Hook to manage background preview rendering
+ * Hook to manage background preview rendering via unified pipeline
  */
 export function usePreviewRenderer() {
   const dispatch = useDispatch();
@@ -35,7 +36,6 @@ export function usePreviewRenderer() {
   const media = useSelector((state: RootState) => state.project.media);
   const settings = useSelector((state: RootState) => state.project.settings);
   const preview = useSelector((state: RootState) => state.preview.preview);
-  const proxyMode = useSelector((state: RootState) => state.preview.proxyMode);
 
   // Refs for debouncing and tracking
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -66,7 +66,7 @@ export function usePreviewRenderer() {
     return clipData;
   }, [timeline.tracks]);
 
-  // Render the full timeline
+  // Run the unified preview pipeline
   const renderPreview = useCallback(async () => {
     if (isRenderingRef.current) return;
     if (!window.electronAPI) return;
@@ -76,7 +76,8 @@ export function usePreviewRenderer() {
     dispatch(startPreviewRender());
 
     try {
-      const result = await window.electronAPI.preview.renderFullPreview({
+      // Use unified pipeline: proxy generation + preview rendering
+      const result = await window.electronAPI.preview.runPipeline({
         timeline: {
           tracks: timeline.tracks,
         },
@@ -96,7 +97,7 @@ export function usePreviewRenderer() {
           proxyEnabled: settings.proxyEnabled,
         },
         duration: timelineDuration,
-        useProxies: proxyMode && settings.proxyEnabled,
+        proxyScale: 0.5, // Half resolution proxies
       });
 
       if (result.success && result.filePath) {
@@ -106,12 +107,12 @@ export function usePreviewRenderer() {
       }
     } catch (error) {
       dispatch(
-        setPreviewError(error instanceof Error ? error.message : 'Render failed')
+        setPreviewError(error instanceof Error ? error.message : 'Pipeline failed')
       );
     } finally {
       isRenderingRef.current = false;
     }
-  }, [dispatch, timeline.tracks, media, settings, proxyMode, timelineDuration]);
+  }, [dispatch, timeline.tracks, media, settings, timelineDuration]);
 
   // Detect timeline edits and trigger re-render
   useEffect(() => {
@@ -146,12 +147,12 @@ export function usePreviewRenderer() {
     }, DEBOUNCE_TIME);
   }, [timelineHash, timelineDuration, dispatch, renderPreview]);
 
-  // Listen for preview progress updates
+  // Listen for pipeline progress updates (unified progress from both phases)
   useEffect(() => {
     if (!window.electronAPI) return;
 
-    const cleanup = window.electronAPI.preview.onPreviewProgress((progress) => {
-      dispatch(setPreviewProgress(progress.percent));
+    const cleanup = window.electronAPI.preview.onPipelineProgress((progress) => {
+      dispatch(setPreviewProgress(progress.overallPercent));
     });
 
     return cleanup;
@@ -163,7 +164,7 @@ export function usePreviewRenderer() {
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
-      window.electronAPI?.preview.cancelPreview();
+      window.electronAPI?.preview.cancelPipeline();
     };
   }, []);
 
@@ -174,9 +175,9 @@ export function usePreviewRenderer() {
       renderPreview();
     }, [renderPreview]),
 
-    // Cancel current render
+    // Cancel current pipeline
     cancelRender: useCallback(() => {
-      window.electronAPI?.preview.cancelPreview();
+      window.electronAPI?.preview.cancelPipeline();
       dispatch(resetPreview());
     }, [dispatch]),
 

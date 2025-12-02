@@ -85,6 +85,17 @@ interface ElectronAPI {
     }) => Promise<{ success: boolean; filePath: string | null; error?: string }>;
     cancelPreview: () => Promise<void>;
     onPreviewProgress: (callback: (progress: { percent: number; fps?: number }) => void) => () => void;
+    // Unified pipeline (proxy generation + preview rendering)
+    runPipeline: (options: {
+      timeline: any;
+      media: any[];
+      settings: any;
+      duration: number;
+      proxyScale?: number;
+    }) => Promise<{ success: boolean; filePath: string | null; generatedProxies: string[]; error?: string }>;
+    cancelPipeline: () => Promise<void>;
+    onPipelineProgress: (callback: (progress: { phase: 'proxy' | 'render'; overallPercent: number; currentTask: string; phasePercent: number }) => void) => () => void;
+    onProxyGenerated: (callback: (data: { mediaId: string; proxyPath: string }) => void) => () => void;
   };
 
   settings: {

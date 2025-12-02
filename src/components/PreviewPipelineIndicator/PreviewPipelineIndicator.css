@@ -1,0 +1,55 @@
+/* Preview Pipeline Indicator - Status Bar Style */
+
+.pipeline-progress-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border-left: 1px solid var(--border-subtle);
+  margin-left: auto;
+}
+
+.pipeline-progress-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.pipeline-progress-bar {
+  width: 100px;
+  height: 4px;
+  background-color: var(--bg-tertiary);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.pipeline-progress-fill {
+  height: 100%;
+  background-color: var(--accent-blue);
+  border-radius: 2px;
+  transition: width 0.2s ease-out;
+}
+
+.pipeline-progress-percent {
+  font-size: 11px;
+  color: var(--text-secondary);
+  min-width: 32px;
+  text-align: right;
+}
+
+.pipeline-cancel-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 2px;
+}
+
+.pipeline-cancel-btn:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
