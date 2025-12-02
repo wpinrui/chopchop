@@ -7,6 +7,13 @@
   flex-direction: column;
   height: 100%;
   background-color: var(--bg-primary);
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+  transition: outline-color 0.15s;
+}
+
+.source-preview.active {
+  outline-color: var(--accent-blue);
 }
 
 /* Empty state */

@@ -20,8 +20,11 @@ import {
   Link2,
 } from 'lucide-react';
 import type { RootState } from '../../store';
-import { setSourceInPoint, setSourceOutPoint } from '../../store/uiSlice';
+import { setSourceInPoint, setSourceOutPoint, setActivePane } from '../../store/uiSlice';
 import './SourcePreview.css';
+
+// Playback speeds for J/L shuttle control
+const PLAYBACK_SPEEDS = [0.5, 1, 2, 4];
 
 const SourcePreview: React.FC = () => {
   const dispatch = useDispatch();
@@ -31,16 +34,20 @@ const SourcePreview: React.FC = () => {
   const sourceMediaId = useSelector((state: RootState) => state.ui.sourceMediaId);
   const sourceInPoint = useSelector((state: RootState) => state.ui.sourceInPoint);
   const sourceOutPoint = useSelector((state: RootState) => state.ui.sourceOutPoint);
+  const activePane = useSelector((state: RootState) => state.ui.activePane);
   const media = useSelector((state: RootState) => state.project.media);
   const fps = useSelector((state: RootState) => state.project.settings.frameRate);
 
   const sourceMedia = media.find((m) => m.id === sourceMediaId) || null;
+  const isActive = activePane === 'source';
 
   // Local state
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isScrubbing, setIsScrubbing] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1); // Current speed magnitude
+  const [playbackDirection, setPlaybackDirection] = useState<-1 | 0 | 1>(0); // -1 = backward, 0 = paused, 1 = forward
 
   // Format timecode as HH:MM:SS:FF
   const formatTimecode = useCallback((seconds: number): string => {
@@ -117,12 +124,168 @@ const SourcePreview: React.FC = () => {
     setIsPlaying(false);
     setCurrentTime(0);
     setVideoError(null);
+    setPlaybackSpeed(1);
+    setPlaybackDirection(0);
     if (sourceMedia) {
       setDuration(sourceMedia.duration);
     }
   }, [sourceMediaId, sourceMedia]);
 
-  // Play/Pause
+  // Handle reverse playback using requestAnimationFrame (HTML5 video doesn't support negative playbackRate)
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || playbackDirection !== -1) return;
+
+    let animationId: number;
+    let lastTime = performance.now();
+
+    const updateReverse = (now: number) => {
+      const delta = (now - lastTime) / 1000; // Convert to seconds
+      lastTime = now;
+
+      const newTime = video.currentTime - delta * playbackSpeed;
+      if (newTime <= 0) {
+        video.currentTime = 0;
+        setCurrentTime(0);
+        setPlaybackDirection(0);
+        setIsPlaying(false);
+        return;
+      }
+
+      video.currentTime = newTime;
+      setCurrentTime(newTime);
+      animationId = requestAnimationFrame(updateReverse);
+    };
+
+    animationId = requestAnimationFrame(updateReverse);
+
+    return () => {
+      if (animationId) {
+        cancelAnimationFrame(animationId);
+      }
+    };
+  }, [playbackDirection, playbackSpeed]);
+
+  // Keyboard shortcuts when this pane is active
+  useEffect(() => {
+    if (!isActive) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const video = videoRef.current;
+      if (!video || !sourceMedia) return;
+
+      // Don't handle if typing in an input
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      switch (e.key.toLowerCase()) {
+        case 'i':
+          e.preventDefault();
+          dispatch(setSourceInPoint(video.currentTime));
+          break;
+
+        case 'o':
+          e.preventDefault();
+          dispatch(setSourceOutPoint(video.currentTime));
+          break;
+
+        case 'k':
+          // Pause
+          e.preventDefault();
+          video.pause();
+          setIsPlaying(false);
+          setPlaybackDirection(0);
+          break;
+
+        case 'j':
+          // Play backwards or increase backward speed
+          e.preventDefault();
+          if (playbackDirection === 1) {
+            // Was playing forward, switch to backward at first speed
+            video.pause();
+            setPlaybackSpeed(PLAYBACK_SPEEDS[0]);
+            setPlaybackDirection(-1);
+            setIsPlaying(true);
+          } else if (playbackDirection === -1) {
+            // Already playing backward, increase speed
+            const currentIndex = PLAYBACK_SPEEDS.indexOf(playbackSpeed);
+            const nextIndex = Math.min(currentIndex + 1, PLAYBACK_SPEEDS.length - 1);
+            setPlaybackSpeed(PLAYBACK_SPEEDS[nextIndex]);
+          } else {
+            // Was paused, start backward at first speed
+            setPlaybackSpeed(PLAYBACK_SPEEDS[0]);
+            setPlaybackDirection(-1);
+            setIsPlaying(true);
+          }
+          break;
+
+        case 'l':
+          // Play forward or increase forward speed
+          e.preventDefault();
+          if (playbackDirection === -1) {
+            // Was playing backward, switch to forward at first speed
+            setPlaybackDirection(1);
+            setPlaybackSpeed(PLAYBACK_SPEEDS[0]);
+            video.playbackRate = PLAYBACK_SPEEDS[0];
+            video.play();
+            setIsPlaying(true);
+          } else if (playbackDirection === 1) {
+            // Already playing forward, increase speed
+            const currentIndex = PLAYBACK_SPEEDS.indexOf(playbackSpeed);
+            const nextIndex = Math.min(currentIndex + 1, PLAYBACK_SPEEDS.length - 1);
+            setPlaybackSpeed(PLAYBACK_SPEEDS[nextIndex]);
+            video.playbackRate = PLAYBACK_SPEEDS[nextIndex];
+          } else {
+            // Was paused, start forward at first speed
+            setPlaybackSpeed(PLAYBACK_SPEEDS[0]);
+            setPlaybackDirection(1);
+            video.playbackRate = PLAYBACK_SPEEDS[0];
+            video.play();
+            setIsPlaying(true);
+          }
+          break;
+
+        case 'arrowleft':
+          // Step back one frame
+          e.preventDefault();
+          video.pause();
+          setIsPlaying(false);
+          setPlaybackDirection(0);
+          {
+            const frameDuration = 1 / fps;
+            const newTime = Math.max(0, video.currentTime - frameDuration);
+            video.currentTime = newTime;
+            setCurrentTime(newTime);
+          }
+          break;
+
+        case 'arrowright':
+          // Step forward one frame
+          e.preventDefault();
+          video.pause();
+          setIsPlaying(false);
+          setPlaybackDirection(0);
+          {
+            const frameDuration = 1 / fps;
+            const newTime = Math.min(duration, video.currentTime + frameDuration);
+            video.currentTime = newTime;
+            setCurrentTime(newTime);
+          }
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isActive, sourceMedia, playbackDirection, playbackSpeed, fps, duration, dispatch]);
+
+  // Set this pane as active when clicked
+  const handlePaneClick = useCallback(() => {
+    if (!isActive) {
+      dispatch(setActivePane('source'));
+    }
+  }, [dispatch, isActive]);
+
+  // Play/Pause (resets to normal speed)
   const handlePlayPause = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -130,7 +293,11 @@ const SourcePreview: React.FC = () => {
     if (isPlaying) {
       video.pause();
       setIsPlaying(false);
+      setPlaybackDirection(0);
     } else {
+      video.playbackRate = 1;
+      setPlaybackSpeed(1);
+      setPlaybackDirection(1);
       video.play();
       setIsPlaying(true);
     }
@@ -226,7 +393,7 @@ const SourcePreview: React.FC = () => {
   // No media selected
   if (!sourceMedia) {
     return (
-      <div className="source-preview">
+      <div className={`source-preview ${isActive ? 'active' : ''}`} onClick={handlePaneClick}>
         <div className="source-preview-empty">
           <p>No source clip selected</p>
           <p className="hint">Double-click a clip in the Media Bin to preview</p>
@@ -242,7 +409,7 @@ const SourcePreview: React.FC = () => {
     : '';
 
   return (
-    <div className="source-preview">
+    <div className={`source-preview ${isActive ? 'active' : ''}`} onClick={handlePaneClick}>
       {/* Video display */}
       <div className="source-video-container">
         <video

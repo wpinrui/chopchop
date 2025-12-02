@@ -9,12 +9,14 @@ import MediaBin, { type MediaBinHandle } from './components/MediaBin/MediaBin';
 import Timeline from './components/Timeline/Timeline';
 import SourcePreview from './components/SourcePreview/SourcePreview';
 import { addTrack } from './store/timelineSlice';
+import { setActivePane } from './store/uiSlice';
 import './App.css';
 
 const App: React.FC = () => {
   const dispatch = useDispatch();
   const projectName = useSelector((state: RootState) => state.project.name);
   const tracks = useSelector((state: RootState) => state.timeline.tracks);
+  const activePane = useSelector((state: RootState) => state.ui.activePane);
   const mediaBinRef = useRef<MediaBinHandle>(null);
   const tracksInitialized = useRef(false);
 
@@ -152,6 +154,25 @@ const App: React.FC = () => {
     document.title = `ChopChop - ${projectName}`;
   }, [projectName]);
 
+  // Pane activation handlers
+  const handleProgramClick = useCallback(() => {
+    if (activePane !== 'program') {
+      dispatch(setActivePane('program'));
+    }
+  }, [dispatch, activePane]);
+
+  const handleTimelineClick = useCallback(() => {
+    if (activePane !== 'timeline') {
+      dispatch(setActivePane('timeline'));
+    }
+  }, [dispatch, activePane]);
+
+  const handleMediaBinClick = useCallback(() => {
+    if (activePane !== 'mediaBin') {
+      dispatch(setActivePane('mediaBin'));
+    }
+  }, [dispatch, activePane]);
+
   return (
     <div className="app">
       <div className="app-body">
@@ -187,7 +208,10 @@ const App: React.FC = () => {
 
           <div className="vertical-resizer" onMouseDown={handleTopVerticalResize} />
 
-          <div className="panel sequence-preview-panel">
+          <div
+            className={`panel sequence-preview-panel ${activePane === 'program' ? 'active' : ''}`}
+            onClick={handleProgramClick}
+          >
             <div className="panel-header">Program Monitor</div>
             <div className="panel-content viewer-content">
               {/* TODO: Viewer component */}
@@ -202,7 +226,11 @@ const App: React.FC = () => {
 
         {/* Bottom row: Media Bin/Effects Browser/etc (left) | Timeline (right) */}
         <div className="bottom-row">
-          <div className="panel media-bin-panel" style={{ width: `${bottomLeftWidth}%` }}>
+          <div
+            className={`panel media-bin-panel ${activePane === 'mediaBin' ? 'active' : ''}`}
+            style={{ width: `${bottomLeftWidth}%` }}
+            onClick={handleMediaBinClick}
+          >
             <div className="panel-header">
               <div className="tab-bar">
                 <button
@@ -241,7 +269,10 @@ const App: React.FC = () => {
 
           <div className="vertical-resizer" onMouseDown={handleBottomVerticalResize} />
 
-          <div className="panel timeline-panel">
+          <div
+            className={`panel timeline-panel ${activePane === 'timeline' ? 'active' : ''}`}
+            onClick={handleTimelineClick}
+          >
             <div className="panel-header">Timeline</div>
             <div className="panel-content timeline-content">
               <Timeline />

@@ -7,7 +7,10 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import type { UIState, Tool, InspectorTab, PanelLayout } from '@types';
 
+type ActivePane = 'source' | 'program' | 'timeline' | 'mediaBin';
+
 interface ExtendedUIState extends UIState {
+  activePane: ActivePane;
   sourceMediaId: string | null;
   sourceInPoint: number | null;
   sourceOutPoint: number | null;
@@ -23,6 +26,7 @@ const initialState: ExtendedUIState = {
   },
   commandCrafterOpen: false,
   inspectorTab: 'clip',
+  activePane: 'timeline',
   sourceMediaId: null,
   sourceInPoint: null,
   sourceOutPoint: null,
@@ -94,6 +98,11 @@ const uiSlice = createSlice({
     setSourceOutPoint: (state, action: PayloadAction<number | null>) => {
       state.sourceOutPoint = action.payload;
     },
+
+    // Active pane
+    setActivePane: (state, action: PayloadAction<ActivePane>) => {
+      state.activePane = action.payload;
+    },
   },
 });
 
@@ -111,6 +120,9 @@ export const {
   setSourceMediaId,
   setSourceInPoint,
   setSourceOutPoint,
+  setActivePane,
 } = uiSlice.actions;
+
+export type { ActivePane };
 
 export default uiSlice.reducer;
