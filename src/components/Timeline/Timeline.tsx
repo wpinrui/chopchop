@@ -8,7 +8,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { Magnet, ZoomIn, ZoomOut, Link } from 'lucide-react';
 import type { RootState } from '../../store';
-import { setPlayheadPosition, addClip, updateClip, unlinkClips, linkClips } from '../../store/timelineSlice';
+import { setPlayheadPosition, addClip, updateClip, removeClip, unlinkClips, linkClips } from '../../store/timelineSlice';
 import { selectClip, addToSelection, removeFromSelection, clearSelection } from '../../store/uiSlice';
 import type { Clip } from '@types';
 import WaveformCanvas from './WaveformCanvas';
@@ -503,6 +503,28 @@ const Timeline: React.FC = () => {
     window.addEventListener('resize', updateViewportWidth);
     return () => window.removeEventListener('resize', updateViewportWidth);
   }, []);
+
+  // Keyboard handler for Delete key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't handle if typing in an input
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedClipIds.length > 0) {
+          e.preventDefault();
+          // Delete all selected clips
+          for (const clipId of selectedClipIds) {
+            dispatch(removeClip(clipId));
+          }
+          dispatch(clearSelection());
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [dispatch, selectedClipIds]);
 
   // Sync scroll position from native scrollbar
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
