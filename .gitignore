@@ -42,3 +42,4 @@ previews/
 
 # Generated capabilities
 src/ffmpeg/capabilities.json
+.claude/settings.local.json
