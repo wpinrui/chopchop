@@ -208,6 +208,8 @@ export class PreviewEngine {
    * Extract a single frame (for scrub/pause)
    */
   async extractFrame(time: number): Promise<ExtractedFrame | null> {
+    // Update currentTime so frameStep uses the correct position
+    this.currentTime = time;
     return this.frameExtractor.extractFrame(time);
   }
 
