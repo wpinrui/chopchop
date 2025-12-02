@@ -63,6 +63,7 @@ interface ProjectSettings {
   frameRate: number;
   backgroundColor: string;
   proxyEnabled: boolean;
+  previewBitrate?: string; // e.g., '2M', '5M', '10M'
 }
 
 interface ChunkRenderOptions {
@@ -643,10 +644,8 @@ export async function renderFullPreview(
     fs.mkdirSync(outputDir, { recursive: true });
   }
 
-  // Scale down to half resolution for faster encoding
-  const [fullWidth, fullHeight] = settings.resolution;
-  const width = Math.round(fullWidth / 2);
-  const height = Math.round(fullHeight / 2);
+  // Use full resolution for preview (quality controlled by bitrate setting)
+  const [width, height] = settings.resolution;
   const fps = settings.frameRate;
 
   // Get video and audio tracks (video tracks reversed so higher tracks overlay lower)
@@ -919,8 +918,17 @@ export async function renderFullPreview(
 
   // Optimized compression settings for fast preview
   args.push('-c:v', 'libx264');
-  args.push('-preset', 'ultrafast');
-  args.push('-crf', '32'); // Slightly better quality than before
+  args.push('-preset', 'veryfast'); // Good balance of speed and quality
+
+  // Use bitrate if specified, otherwise fall back to CRF
+  if (settings.previewBitrate) {
+    args.push('-b:v', settings.previewBitrate);
+    args.push('-maxrate', settings.previewBitrate);
+    args.push('-bufsize', `${parseInt(settings.previewBitrate) * 2}M`);
+  } else {
+    args.push('-crf', '32'); // Fallback quality
+  }
+
   args.push('-tune', 'fastdecode'); // Optimize for fast playback
   args.push('-g', String(fps * 2)); // Keyframe every 2 seconds for better seeking
   args.push('-c:a', 'aac');

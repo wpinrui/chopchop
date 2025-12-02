@@ -452,3 +452,25 @@
   border-color: rgba(52, 152, 219, 0.5);
   color: rgb(52, 152, 219);
 }
+
+/* Canvas for pause/scrub display (full quality from source) */
+.program-preview-canvas {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+/* Frame extraction indicator (small spinner in corner) */
+.program-extracting-indicator {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 4px;
+  background-color: rgba(0, 0, 0, 0.6);
+  border-radius: 4px;
+}
+
+.extracting-spinner {
+  animation: spin 0.8s linear infinite;
+  color: var(--accent-blue);
+}

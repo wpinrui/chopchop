@@ -95,6 +95,7 @@ export function usePreviewRenderer() {
           frameRate: settings.frameRate,
           backgroundColor: settings.backgroundColor,
           proxyEnabled: settings.proxyEnabled,
+          previewBitrate: settings.previewBitrate,
         },
         duration: timelineDuration,
         proxyScale: 0.5, // Half resolution proxies

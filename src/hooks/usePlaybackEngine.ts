@@ -16,7 +16,7 @@
 import { useRef, useCallback, useEffect } from 'react';
 import { useDispatch } from 'react-redux';
 import { setPlayheadPosition } from '../store/timelineSlice';
-import type { PlaybackStateRef, PlaybackMode } from '@types';
+import type { PlaybackStateRef } from '@types';
 
 // Configuration: Redux sync interval
 // 250ms = 4Hz (matches native timeupdate events)

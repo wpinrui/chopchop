@@ -61,6 +61,7 @@ interface ElectronAPI {
   };
 
   preview: {
+    // Legacy chunk-based rendering
     renderChunk: (options: {
       chunkId: string;
       startTime: number;
@@ -96,6 +97,126 @@ interface ElectronAPI {
     cancelPipeline: () => Promise<void>;
     onPipelineProgress: (callback: (progress: { phase: 'proxy' | 'render'; overallPercent: number; currentTask: string; phasePercent: number }) => void) => () => void;
     onProxyGenerated: (callback: (data: { mediaId: string; proxyPath: string }) => void) => () => void;
+
+    // ========================================================================
+    // HYBRID PREVIEW SYSTEM (New)
+    // ========================================================================
+
+    // Initialize the hybrid preview engine
+    init: (options: {
+      timeline: any;
+      media: any[];
+      settings: any;
+      duration: number;
+      projectPath: string | null;
+    }) => Promise<{
+      success: boolean;
+      chunks?: Array<{
+        index: number;
+        startTime: number;
+        endTime: number;
+        status: string;
+        filePath: string | null;
+        isComplex: boolean;
+      }>;
+      error?: string;
+    }>;
+
+    // Update timeline after edits
+    updateTimeline: (options: {
+      timeline: any;
+      media: any[];
+      settings: any;
+      duration: number;
+    }) => Promise<{ success: boolean; error?: string }>;
+
+    // Extract a single frame (for scrub/pause) - returns RGBA pixel data
+    extractFrame: (time: number) => Promise<{
+      success: boolean;
+      time?: number;
+      width?: number;
+      height?: number;
+      data?: ArrayBuffer;
+      error?: string;
+    }>;
+
+    // Scrub mode
+    scrubStart: (time: number) => Promise<{ success: boolean }>;
+    scrubUpdate: (time: number, velocity: number) => Promise<{
+      success: boolean;
+      time?: number;
+      width?: number;
+      height?: number;
+      data?: ArrayBuffer;
+      error?: string;
+    }>;
+    scrubEnd: () => Promise<{ success: boolean }>;
+
+    // Frame stepping (for accurate cutting)
+    frameStep: (direction: -1 | 1) => Promise<{
+      success: boolean;
+      time?: number;
+      width?: number;
+      height?: number;
+      data?: ArrayBuffer;
+      error?: string;
+    }>;
+
+    // Get playback info (realtime vs cached chunk)
+    getPlaybackInfo: (time: number) => Promise<{
+      mode: 'realtime' | 'chunk';
+      chunkPath: string | null;
+      chunkStartTime: number;
+      isComplex: boolean;
+    }>;
+
+    // Get clip info for realtime playback
+    getClipAtTime: (time: number) => Promise<{
+      mediaPath: string;
+      mediaTime: number;
+      hasClip: boolean;
+    } | null>;
+
+    // Prioritize chunks near playhead for background rendering
+    prioritizeChunks: (time: number) => Promise<{ success: boolean }>;
+
+    // Invalidate chunks in a time range (after edits)
+    invalidateRange: (startTime: number, endTime: number) => Promise<{ success: boolean }>;
+
+    // Clear all preview cache (hybrid system)
+    clearAllCache: () => Promise<{ success: boolean; error?: string }>;
+
+    // Get cache statistics
+    getCacheStats: () => Promise<{ totalChunks: number; cachedChunks: number; totalSize: number }>;
+
+    // Get current chunks status
+    getChunks: () => Promise<Array<{
+      index: number;
+      startTime: number;
+      endTime: number;
+      status: string;
+      filePath: string | null;
+      isComplex: boolean;
+    }>>;
+
+    // Listen for chunk status updates
+    onChunksUpdate: (callback: (chunks: Array<{
+      index: number;
+      startTime: number;
+      endTime: number;
+      status: string;
+      filePath: string | null;
+      isComplex: boolean;
+    }>) => void) => () => void;
+
+    // Listen for audio snippets (for scrub audio)
+    onAudioSnippet: (callback: (data: {
+      time: number;
+      duration: number;
+      sampleRate: number;
+      channels: number;
+      audioData: ArrayBuffer;
+    }) => void) => () => void;
   };
 
   settings: {
@@ -121,8 +242,8 @@ interface ElectronAPI {
     onUndo: (callback: () => void) => () => void;
     onRedo: (callback: () => void) => () => void;
     onResetLayout: (callback: () => void) => () => void;
-    onRegenerateProxies: (callback: () => void) => () => void;
-    onClearProxies: (callback: () => void) => () => void;
+    onRegeneratePreview: (callback: () => void) => () => void;
+    onClearPreviewCache: (callback: () => void) => () => void;
   };
 }
 

@@ -10,6 +10,7 @@ import { probeMediaFile, getMediaDuration, generateThumbnail, getMediaType, gene
 import { checkFFmpegAvailable, getFFmpegVersion, checkNvencAvailable, generateProxy, cancelProxyGeneration } from './ffmpeg/runner';
 import { exportTimeline, cancelExport, type ExportProgress } from './ffmpeg/exporter';
 import { renderChunk, cancelChunkRender, cancelAllChunkRenders, getChunkOutputDir, clearChunkCache, renderFullPreview, cancelPreviewRender, runPreviewPipeline, cancelPipeline, type PipelineProgress } from './ffmpeg/chunkRenderer';
+import { getPreviewEngine, disposePreviewEngine } from './preview';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 
@@ -206,12 +207,14 @@ function createAppMenu() {
       label: 'Advanced',
       submenu: [
         {
-          label: 'Regenerate Proxies',
-          click: () => mainWindow?.webContents.send('menu:regenerateProxies'),
+          label: 'Regenerate Preview',
+          click: () => mainWindow?.webContents.send('menu:regeneratePreview'),
         },
+        { type: 'separator' },
         {
-          label: 'Clear All Proxies',
-          click: () => mainWindow?.webContents.send('menu:clearProxies'),
+          label: 'Clear Preview Cache',
+          accelerator: 'CmdOrCtrl+Shift+Delete',
+          click: () => mainWindow?.webContents.send('menu:clearPreviewCache'),
         },
       ],
     },
@@ -660,9 +663,249 @@ function registerIPCHandlers() {
   ipcMain.handle('preview:cancelPipeline', async () => {
     cancelPipeline();
   });
+
+  // ==========================================================================
+  // HYBRID PREVIEW SYSTEM (New)
+  // ==========================================================================
+
+  // Initialize the hybrid preview engine
+  ipcMain.handle('preview:init', async (
+    _event,
+    options: {
+      timeline: any;
+      media: any[];
+      settings: any;
+      duration: number;
+      projectPath: string | null;
+    }
+  ) => {
+    if (!mainWindow) return { success: false, error: 'No main window' };
+
+    try {
+      const engine = getPreviewEngine();
+      const chunks = await engine.initialize(
+        options.timeline,
+        options.media,
+        options.settings,
+        options.duration,
+        options.projectPath,
+        mainWindow
+      );
+
+      return {
+        success: true,
+        chunks: chunks.map(c => ({
+          index: c.index,
+          startTime: c.startTime,
+          endTime: c.endTime,
+          status: c.status,
+          filePath: c.filePath,
+          isComplex: c.isComplex,
+        })),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  });
+
+  // Update timeline (after edits)
+  ipcMain.handle('preview:updateTimeline', async (
+    _event,
+    options: {
+      timeline: any;
+      media: any[];
+      settings: any;
+      duration: number;
+    }
+  ) => {
+    try {
+      const engine = getPreviewEngine();
+      await engine.updateTimeline(
+        options.timeline,
+        options.media,
+        options.settings,
+        options.duration
+      );
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  });
+
+  // Extract a single frame (for scrub/pause)
+  ipcMain.handle('preview:extractFrame', async (_event, time: number) => {
+    try {
+      const engine = getPreviewEngine();
+      const frame = await engine.extractFrame(time);
+
+      if (frame) {
+        return {
+          success: true,
+          time: frame.time,
+          width: frame.width,
+          height: frame.height,
+          data: frame.data.buffer.slice(
+            frame.data.byteOffset,
+            frame.data.byteOffset + frame.data.byteLength
+          ),
+        };
+      }
+
+      return { success: false, error: 'No frame extracted' };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  });
+
+  // Start scrub mode
+  ipcMain.handle('preview:scrubStart', async (_event, time: number) => {
+    const engine = getPreviewEngine();
+    engine.startScrub(time);
+    return { success: true };
+  });
+
+  // Update scrub position
+  ipcMain.handle('preview:scrubUpdate', async (
+    _event,
+    options: { time: number; velocity: number }
+  ) => {
+    try {
+      const engine = getPreviewEngine();
+      const frame = await engine.updateScrub(options.time, options.velocity);
+
+      if (frame) {
+        return {
+          success: true,
+          time: frame.time,
+          width: frame.width,
+          height: frame.height,
+          data: frame.data.buffer.slice(
+            frame.data.byteOffset,
+            frame.data.byteOffset + frame.data.byteLength
+          ),
+        };
+      }
+
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  });
+
+  // End scrub mode
+  ipcMain.handle('preview:scrubEnd', async () => {
+    const engine = getPreviewEngine();
+    engine.endScrub();
+    return { success: true };
+  });
+
+  // Step one frame
+  ipcMain.handle('preview:frameStep', async (_event, direction: -1 | 1) => {
+    try {
+      const engine = getPreviewEngine();
+      const frame = await engine.frameStep(direction);
+
+      if (frame) {
+        return {
+          success: true,
+          time: frame.time,
+          width: frame.width,
+          height: frame.height,
+          data: frame.data.buffer.slice(
+            frame.data.byteOffset,
+            frame.data.byteOffset + frame.data.byteLength
+          ),
+        };
+      }
+
+      return { success: false, error: 'No frame extracted' };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  });
+
+  // Get playback info for a time (realtime vs chunk)
+  ipcMain.handle('preview:getPlaybackInfo', async (_event, time: number) => {
+    const engine = getPreviewEngine();
+    return engine.getPlaybackInfo(time);
+  });
+
+  // Get clip info for realtime playback
+  ipcMain.handle('preview:getClipAtTime', async (_event, time: number) => {
+    const engine = getPreviewEngine();
+    return engine.getClipAtTime(time);
+  });
+
+  // Prioritize chunks near playhead
+  ipcMain.handle('preview:prioritizeChunks', async (_event, time: number) => {
+    const engine = getPreviewEngine();
+    engine.prioritizeChunksNear(time);
+    return { success: true };
+  });
+
+  // Invalidate chunks in a range
+  ipcMain.handle('preview:invalidateRange', async (
+    _event,
+    options: { startTime: number; endTime: number }
+  ) => {
+    const engine = getPreviewEngine();
+    engine.invalidateRange(options.startTime, options.endTime);
+    return { success: true };
+  });
+
+  // Clear all preview cache (new hybrid system)
+  ipcMain.handle('preview:clearAllCache', async () => {
+    try {
+      const engine = getPreviewEngine();
+      await engine.clearCache();
+      // Also clear old chunk cache for backwards compatibility
+      await clearChunkCache();
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  });
+
+  // Get cache statistics
+  ipcMain.handle('preview:getCacheStats', async () => {
+    const engine = getPreviewEngine();
+    return engine.getCacheStats();
+  });
+
+  // Get current chunks status
+  ipcMain.handle('preview:getChunks', async () => {
+    const engine = getPreviewEngine();
+    return engine.getChunks().map(c => ({
+      index: c.index,
+      startTime: c.startTime,
+      endTime: c.endTime,
+      status: c.status,
+      filePath: c.filePath,
+      isComplex: c.isComplex,
+    }));
+  });
 }
 
 // Graceful shutdown
 app.on('before-quit', () => {
-  // TODO: Clean up ffmpeg processes, temp files, etc.
+  // Clean up preview engine and ffmpeg processes
+  disposePreviewEngine();
 });

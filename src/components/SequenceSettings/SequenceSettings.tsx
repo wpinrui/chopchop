@@ -28,6 +28,10 @@ const RESOLUTION_PRESETS = [
 // Common frame rate presets
 const FRAME_RATE_PRESETS = [24, 25, 30, 48, 50, 60];
 
+// Preview bitrate range (1-15 Mbps)
+const MIN_BITRATE = 1;
+const MAX_BITRATE = 15;
+
 const SequenceSettings: React.FC = () => {
   const dispatch = useDispatch();
   const settings = useSelector((state: RootState) => state.project.settings);
@@ -36,6 +40,8 @@ const SequenceSettings: React.FC = () => {
   const [width, height] = settings.resolution;
   const frameRate = settings.frameRate;
   const backgroundColor = settings.backgroundColor;
+  // Parse previewBitrate string like "2M" to number like 2
+  const bitrateValue = parseInt((settings.previewBitrate || '2M').replace('M', ''), 10) || 2;
 
   const handleWidthChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const newWidth = parseInt(e.target.value, 10);
@@ -74,6 +80,12 @@ const SequenceSettings: React.FC = () => {
   const handleSwapDimensions = useCallback(() => {
     dispatch(updateSettings({ resolution: [height, width] }));
   }, [dispatch, width, height]);
+
+  // Preview bitrate slider change
+  const handlePreviewBitrateChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = parseInt(e.target.value, 10);
+    dispatch(updateSettings({ previewBitrate: `${value}M` }));
+  }, [dispatch]);
 
   // Calculate aspect ratio display
   const gcd = (a: number, b: number): number => b === 0 ? a : gcd(b, a % b);
@@ -188,6 +200,34 @@ const SequenceSettings: React.FC = () => {
           />
           <span className="color-hint">
             Used for gaps and letterboxing
+          </span>
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <h3>Preview Settings</h3>
+
+        <div className="settings-row">
+          <label className="bitrate-slider-label">
+            Bitrate: {bitrateValue} Mbps
+            <div className="bitrate-slider-container">
+              <input
+                type="range"
+                min={MIN_BITRATE}
+                max={MAX_BITRATE}
+                step={1}
+                value={bitrateValue}
+                onChange={handlePreviewBitrateChange}
+                className="bitrate-slider"
+              />
+              <div className="bitrate-marks">
+                <span>{MIN_BITRATE}M</span>
+                <span>{MAX_BITRATE}M</span>
+              </div>
+            </div>
+          </label>
+          <span className="settings-hint">
+            Higher bitrate = better quality but slower rendering
           </span>
         </div>
       </div>

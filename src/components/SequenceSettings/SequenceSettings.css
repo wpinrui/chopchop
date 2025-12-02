@@ -161,3 +161,104 @@
 .settings-info.pending {
   border-left-color: var(--accent-yellow, #ffc107);
 }
+
+/* Bitrate slider */
+.bitrate-slider-label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  width: 100%;
+}
+
+.bitrate-slider-container {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+.bitrate-slider {
+  width: 100%;
+  height: 4px;
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.bitrate-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent-blue);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.bitrate-slider::-webkit-slider-thumb:hover {
+  background: var(--accent-blue-dark, #0066cc);
+  transform: scale(1.1);
+}
+
+.bitrate-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent-blue);
+  cursor: pointer;
+  border: none;
+  transition: all 0.15s;
+}
+
+.bitrate-slider::-moz-range-thumb:hover {
+  background: var(--accent-blue-dark, #0066cc);
+  transform: scale(1.1);
+}
+
+.bitrate-marks {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: var(--text-disabled);
+  margin-top: 2px;
+}
+
+/* Settings hint */
+.settings-hint {
+  font-size: 10px;
+  color: var(--text-disabled);
+  margin-left: 8px;
+}
+
+/* Regenerate button */
+.regenerate-btn {
+  padding: 8px 16px;
+  background-color: var(--accent-blue);
+  border: none;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.regenerate-btn:hover:not(:disabled) {
+  background-color: var(--accent-blue-dark, #0066cc);
+  transform: translateY(-1px);
+}
+
+.regenerate-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.regenerate-btn:disabled {
+  background-color: var(--bg-tertiary);
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}

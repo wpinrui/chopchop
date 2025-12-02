@@ -27,6 +27,7 @@ export interface ProjectSettings {
 
   // Preview settings
   previewQuality: number; // 1.0 = full, 0.5 = half, 0.25 = quarter resolution
+  previewBitrate: string; // e.g., '2M', '5M', '10M'
 
   // Proxy settings
   proxyEnabled: boolean;
@@ -43,6 +44,7 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   backgroundColor: '#000000',
   sequenceInitialized: false,
   previewQuality: 0.25, // Default to quarter resolution for better performance
+  previewBitrate: '2M', // 2 Mbps default for preview
   proxyEnabled: true,
   proxyScale: 0.25, // Quarter resolution proxy for fast playback
   audioSampleRate: 48000,

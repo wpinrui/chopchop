@@ -36,7 +36,7 @@ const App: React.FC = () => {
   const dispatch = useDispatch();
 
   // Initialize background preview renderer
-  usePreviewRenderer();
+  const { forceRender } = usePreviewRenderer();
 
   const project = useSelector((state: RootState) => state.project);
   const timeline = useSelector((state: RootState) => state.timeline);
@@ -286,10 +286,25 @@ const App: React.FC = () => {
         setStatusMessage('Redo (not implemented yet)');
       }),
       window.electronAPI.menu.onResetLayout(handleResetLayout),
+      window.electronAPI.menu.onRegeneratePreview(() => {
+        forceRender();
+        setStatusMessage('Regenerating preview...');
+      }),
+      window.electronAPI.menu.onClearPreviewCache(async () => {
+        setStatusMessage('Clearing preview cache...');
+        try {
+          await window.electronAPI.preview.clearAllCache();
+          setStatusMessage('Preview cache cleared');
+          setTimeout(() => setStatusMessage('Ready'), 2000);
+        } catch (error) {
+          setStatusMessage('Failed to clear cache');
+          console.error('Failed to clear preview cache:', error);
+        }
+      }),
     ];
 
     return () => cleanups.forEach(cleanup => cleanup());
-  }, [handleOpen, handleSave, handleSaveAs, handleExport, loadProjectFromPath, handleResetLayout]);
+  }, [handleOpen, handleSave, handleSaveAs, handleExport, loadProjectFromPath, handleResetLayout, forceRender]);
 
   // Handle unsaved changes check when closing
   useEffect(() => {

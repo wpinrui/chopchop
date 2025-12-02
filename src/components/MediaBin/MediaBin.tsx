@@ -79,52 +79,6 @@ const MediaBin = forwardRef<MediaBinHandle>((_props, ref) => {
     }
   }, [dispatch, proxyEnabled, proxyScale]);
 
-  // Regenerate all proxies (delete existing and regenerate)
-  const handleRegenerateProxies = useCallback(async () => {
-    if (!window.electronAPI) return;
-
-    for (const item of media) {
-      if (item.type !== 'video') continue;
-
-      // Delete existing proxy if present
-      if (item.proxyPath) {
-        await window.electronAPI.media.deleteProxy(item.proxyPath);
-        dispatch(updateMediaItem({ id: item.id, updates: { proxyPath: null } }));
-      }
-
-      // Regenerate proxy
-      generateProxyForMedia(item);
-    }
-  }, [media, dispatch, generateProxyForMedia]);
-
-  // Clear all proxies
-  const handleClearProxies = useCallback(async () => {
-    if (!window.electronAPI) return;
-
-    for (const item of media) {
-      if (item.type !== 'video' || !item.proxyPath) continue;
-
-      // Delete proxy file
-      await window.electronAPI.media.deleteProxy(item.proxyPath);
-
-      // Update media item to remove proxy path
-      dispatch(updateMediaItem({ id: item.id, updates: { proxyPath: null } }));
-    }
-  }, [media, dispatch]);
-
-  // Listen for menu events
-  useEffect(() => {
-    if (!window.electronAPI) return;
-
-    const cleanupRegenerate = window.electronAPI.menu.onRegenerateProxies(handleRegenerateProxies);
-    const cleanupClear = window.electronAPI.menu.onClearProxies(handleClearProxies);
-
-    return () => {
-      cleanupRegenerate();
-      cleanupClear();
-    };
-  }, [handleRegenerateProxies, handleClearProxies]);
-
   const handleImport = useCallback(async () => {
     if (!window.electronAPI) {
       console.error('Electron API not available. Make sure you are running in Electron context.');

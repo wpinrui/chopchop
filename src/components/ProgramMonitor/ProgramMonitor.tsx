@@ -1,12 +1,11 @@
 /**
- * Program Monitor Component - Hybrid Architecture Rewrite
+ * Program Monitor Component - Hybrid Preview Architecture
  *
  * High-performance video playback using:
- * - Native video.play() for forward playback (4Hz Redux sync)
- * - RAF-driven for scrubbing, stepping, reverse (muted)
- * - Canvas overlay for future UI elements (markers, safe zones, waveforms)
- *
- * Performance: 60fps playback, 4Hz Redux updates (configurable), no legacy clip mode.
+ * - Native video.play() for forward playback of pre-rendered preview
+ * - Canvas + frame extraction from source files for pause/scrub (full quality)
+ * - Pitch-shifted audio during scrubbing
+ * - Single-frame audio for frame stepping (accurate cutting)
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -24,11 +23,10 @@ import {
 } from 'lucide-react';
 import type { RootState } from '../../store';
 import { setActivePane, setPlayingPane } from '../../store/uiSlice';
+import { setPlayheadPosition } from '../../store/timelineSlice';
 import { updateSettings } from '../../store/projectSlice';
 import TimecodeInput from '../TimecodeInput/TimecodeInput';
-import { usePlaybackEngine } from '../../hooks/usePlaybackEngine';
-import { useJKLShuttle } from '../../hooks/useJKLShuttle';
-import { useScrubbing } from '../../hooks/useScrubbing';
+import { useHybridPreview, useFrameRenderer } from '../../hooks/useHybridPreview';
 import './ProgramMonitor.css';
 
 // Preview quality options
@@ -38,6 +36,9 @@ const PREVIEW_QUALITY_OPTIONS = [
   { value: 0.25, label: '1/4' },
   { value: 0.125, label: '1/8' },
 ];
+
+// Display mode: video for playback, canvas for pause/scrub
+type DisplayMode = 'video' | 'canvas';
 
 const ProgramMonitor: React.FC = () => {
   const dispatch = useDispatch();
@@ -63,7 +64,7 @@ const ProgramMonitor: React.FC = () => {
   const backgroundColor = useSelector((state: RootState) => state.project.settings.backgroundColor);
   const previewQuality = useSelector((state: RootState) => state.project.settings.previewQuality) ?? 1;
 
-  // Preview file state
+  // Preview file state (legacy - for video playback fallback)
   const preview = useSelector((state: RootState) => state.preview.preview);
   const previewReady = preview.status === 'ready';
   const previewRendering = preview.status === 'rendering';
@@ -80,6 +81,20 @@ const ProgramMonitor: React.FC = () => {
   // Local UI state
   const [isMuted, setIsMuted] = useState(false);
   const [showLoadingDialog, setShowLoadingDialog] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isScrubbing, setIsScrubbing] = useState(false);
+  const [displayMode, setDisplayMode] = useState<DisplayMode>('canvas');
+
+  // Hybrid preview system
+  const [previewState, previewActions] = useHybridPreview();
+  const renderFrame = useFrameRenderer(canvasRef);
+
+  // Scrub state for velocity tracking
+  const scrubStateRef = useRef({
+    lastTime: 0,
+    lastPosition: 0,
+    isActive: false,
+  });
 
   // Calculate timeline duration
   const timelineDuration = Math.max(
@@ -88,42 +103,6 @@ const ProgramMonitor: React.FC = () => {
     ),
     1 // Minimum 1 second
   );
-
-  // Playback engine (hybrid architecture)
-  const {
-    playbackStateRef,
-    play,
-    pause,
-    togglePlayPause,
-    seek,
-    setSpeed,
-    stepFrame,
-    goToStart,
-    goToEnd,
-  } = usePlaybackEngine({
-    videoRef,
-    reduxPlayheadPosition: playheadPosition,
-    timelineDuration,
-    previewReady,
-  });
-
-  // JKL shuttle control
-  const { handleJ, handleK, handleL } = useJKLShuttle({
-    playbackStateRef,
-    play,
-    pause,
-    setSpeed,
-  });
-
-  // Scrubbing
-  const { isScrubbing, handleScrubStart } = useScrubbing({
-    playbackStateRef,
-    scrubBarRef,
-    timelineDuration,
-    seek,
-    pause,
-    play,
-  });
 
   // Track container size with ResizeObserver
   useEffect(() => {
@@ -176,27 +155,253 @@ const ProgramMonitor: React.FC = () => {
     return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}:${frames.toString().padStart(2, '0')}`;
   }, [fps]);
 
-  // Play/Pause with loading dialog if preview not ready
-  const handlePlayPause = useCallback(() => {
-    const state = playbackStateRef.current;
-    if (!state) return;
-
-    if (state.isPlaying) {
-      pause();
-      dispatch(setPlayingPane(null));
-    } else {
-      // Check if preview is ready
-      if (!previewReady) {
-        setShowLoadingDialog(true);
-        return;
-      }
-      play();
-      dispatch(setPlayingPane('program'));
+  // Extract and render frame at current playhead
+  const extractAndRenderFrame = useCallback(async (time: number) => {
+    const frame = await previewActions.extractFrame(time);
+    if (frame.success && frame.data) {
+      renderFrame(frame);
     }
-  }, [playbackStateRef, pause, play, previewReady, dispatch]);
+  }, [previewActions, renderFrame]);
 
-  // Note: Playing pane state is now managed directly in play/pause callbacks above
-  // This ensures keyboard shortcuts work correctly
+  // Initialize preview and extract first frame when ready
+  useEffect(() => {
+    if (previewState.isInitialized && !isPlaying) {
+      extractAndRenderFrame(playheadPosition);
+    }
+  }, [previewState.isInitialized]);
+
+  // Extract frame when paused and playhead changes (from timeline scrub, timecode input, etc.)
+  const lastExtractedTimeRef = useRef<number>(-1);
+  useEffect(() => {
+    if (!isPlaying && !isScrubbing && previewState.isInitialized) {
+      // Avoid extracting the same frame multiple times
+      if (Math.abs(playheadPosition - lastExtractedTimeRef.current) > 0.001) {
+        lastExtractedTimeRef.current = playheadPosition;
+        extractAndRenderFrame(playheadPosition);
+      }
+    }
+  }, [playheadPosition, isPlaying, isScrubbing, previewState.isInitialized, extractAndRenderFrame]);
+
+  // Play handler
+  const handlePlay = useCallback(() => {
+    if (!previewReady) {
+      setShowLoadingDialog(true);
+      return;
+    }
+
+    const video = videoRef.current;
+    if (!video) return;
+
+    setIsPlaying(true);
+    setDisplayMode('video');
+    dispatch(setPlayingPane('program'));
+
+    video.currentTime = playheadPosition;
+    video.play();
+  }, [previewReady, playheadPosition, dispatch]);
+
+  // Pause handler
+  const handlePause = useCallback(async () => {
+    const video = videoRef.current;
+    if (video) {
+      video.pause();
+    }
+
+    setIsPlaying(false);
+    setDisplayMode('canvas');
+    dispatch(setPlayingPane(null));
+
+    // Extract frame at pause position for full quality display
+    const currentTime = video?.currentTime ?? playheadPosition;
+    dispatch(setPlayheadPosition(currentTime));
+    lastExtractedTimeRef.current = currentTime;
+    await extractAndRenderFrame(currentTime);
+  }, [dispatch, playheadPosition, extractAndRenderFrame]);
+
+  // Toggle play/pause
+  const handlePlayPause = useCallback(() => {
+    if (isPlaying) {
+      handlePause();
+    } else {
+      handlePlay();
+    }
+  }, [isPlaying, handlePlay, handlePause]);
+
+  // Frame step with audio
+  const handleFrameStep = useCallback(async (direction: -1 | 1) => {
+    // Pause if playing
+    if (isPlaying) {
+      const video = videoRef.current;
+      if (video) video.pause();
+      setIsPlaying(false);
+      setDisplayMode('canvas');
+      dispatch(setPlayingPane(null));
+    }
+
+    // Use hybrid preview frame step (includes audio)
+    const frame = await previewActions.frameStep(direction);
+
+    if (frame && frame.success && frame.data) {
+      renderFrame(frame);
+      // Update Redux with new time
+      if (frame.time !== undefined) {
+        lastExtractedTimeRef.current = frame.time;
+        dispatch(setPlayheadPosition(frame.time));
+      }
+    } else {
+      // Fallback: manual step
+      const frameDuration = 1 / fps;
+      const newTime = Math.max(0, Math.min(timelineDuration, playheadPosition + direction * frameDuration));
+      lastExtractedTimeRef.current = newTime;
+      dispatch(setPlayheadPosition(newTime));
+      await extractAndRenderFrame(newTime);
+    }
+  }, [isPlaying, previewActions, renderFrame, fps, timelineDuration, playheadPosition, dispatch, extractAndRenderFrame]);
+
+  // Seek to position
+  const handleSeek = useCallback(async (time: number) => {
+    const clampedTime = Math.max(0, Math.min(timelineDuration, time));
+    lastExtractedTimeRef.current = clampedTime;
+    dispatch(setPlayheadPosition(clampedTime));
+
+    if (isPlaying) {
+      const video = videoRef.current;
+      if (video) {
+        video.currentTime = clampedTime;
+      }
+    } else {
+      await extractAndRenderFrame(clampedTime);
+    }
+  }, [timelineDuration, isPlaying, dispatch, extractAndRenderFrame]);
+
+  // Go to start
+  const handleGoToStart = useCallback(() => {
+    if (isPlaying) handlePause();
+    handleSeek(0);
+  }, [isPlaying, handlePause, handleSeek]);
+
+  // Go to end
+  const handleGoToEnd = useCallback(() => {
+    if (isPlaying) handlePause();
+    handleSeek(timelineDuration);
+  }, [isPlaying, handlePause, handleSeek, timelineDuration]);
+
+  // Scrub bar handlers
+  const getTimeFromMouseX = useCallback((clientX: number): number => {
+    const scrubBar = scrubBarRef.current;
+    if (!scrubBar) return 0;
+
+    const rect = scrubBar.getBoundingClientRect();
+    const percent = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    return percent * timelineDuration;
+  }, [timelineDuration]);
+
+  // Start scrubbing
+  const handleScrubStart = useCallback(async (e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+
+    // Pause if playing
+    if (isPlaying) {
+      const video = videoRef.current;
+      if (video) video.pause();
+      setIsPlaying(false);
+      dispatch(setPlayingPane(null));
+    }
+
+    setIsScrubbing(true);
+    setDisplayMode('canvas');
+
+    const time = getTimeFromMouseX(e.clientX);
+    lastExtractedTimeRef.current = time;
+    dispatch(setPlayheadPosition(time));
+
+    // Start hybrid scrub (for audio)
+    await previewActions.startScrub(time);
+
+    // Initialize scrub velocity tracking
+    scrubStateRef.current = {
+      lastTime: performance.now(),
+      lastPosition: time,
+      isActive: true,
+    };
+
+    // Extract initial frame
+    await extractAndRenderFrame(time);
+  }, [isPlaying, getTimeFromMouseX, previewActions, dispatch, extractAndRenderFrame]);
+
+  // Handle scrub mouse move
+  useEffect(() => {
+    if (!isScrubbing) return;
+
+    const handleMouseMove = async (e: MouseEvent) => {
+      const time = getTimeFromMouseX(e.clientX);
+      lastExtractedTimeRef.current = time;
+      dispatch(setPlayheadPosition(time));
+
+      // Calculate velocity for scrub audio
+      const now = performance.now();
+      const deltaTime = (now - scrubStateRef.current.lastTime) / 1000;
+      const deltaPosition = time - scrubStateRef.current.lastPosition;
+      const velocity = deltaTime > 0 ? deltaPosition / deltaTime : 0;
+
+      scrubStateRef.current.lastTime = now;
+      scrubStateRef.current.lastPosition = time;
+
+      // Update scrub (includes audio)
+      const frame = await previewActions.updateScrub(time, velocity);
+      if (frame && frame.success && frame.data) {
+        renderFrame(frame);
+      } else {
+        // Fallback to regular frame extraction
+        await extractAndRenderFrame(time);
+      }
+    };
+
+    const handleMouseUp = async () => {
+      setIsScrubbing(false);
+      scrubStateRef.current.isActive = false;
+
+      // End hybrid scrub
+      await previewActions.endScrub();
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isScrubbing, getTimeFromMouseX, previewActions, renderFrame, dispatch, extractAndRenderFrame]);
+
+  // Video timeupdate handler - sync to Redux during playback
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const handleTimeUpdate = () => {
+      if (isPlaying) {
+        dispatch(setPlayheadPosition(video.currentTime));
+      }
+    };
+
+    const handleEnded = () => {
+      setIsPlaying(false);
+      setDisplayMode('canvas');
+      dispatch(setPlayingPane(null));
+      dispatch(setPlayheadPosition(timelineDuration));
+      lastExtractedTimeRef.current = timelineDuration;
+      extractAndRenderFrame(timelineDuration);
+    };
+
+    video.addEventListener('timeupdate', handleTimeUpdate);
+    video.addEventListener('ended', handleEnded);
+
+    return () => {
+      video.removeEventListener('timeupdate', handleTimeUpdate);
+      video.removeEventListener('ended', handleEnded);
+    };
+  }, [isPlaying, timelineDuration, dispatch, extractAndRenderFrame]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -210,37 +415,43 @@ const ProgramMonitor: React.FC = () => {
         case 'k':
         case ' ':
           e.preventDefault();
-          handlePlayPause(); // Toggle play/pause (not just pause)
+          handlePlayPause();
           break;
 
         case 'j':
           e.preventDefault();
-          handleJ();
+          // TODO: JKL shuttle - for now just step back
+          handleFrameStep(-1);
           break;
 
         case 'l':
           e.preventDefault();
-          handleL();
+          // TODO: JKL shuttle - for now just step forward or play
+          if (!isPlaying) {
+            handlePlay();
+          } else {
+            // Already playing, could increase speed here
+          }
           break;
 
         case 'arrowleft':
           e.preventDefault();
-          stepFrame(-1, fps);
+          handleFrameStep(-1);
           break;
 
         case 'arrowright':
           e.preventDefault();
-          stepFrame(1, fps);
+          handleFrameStep(1);
           break;
 
         case 'home':
           e.preventDefault();
-          goToStart();
+          handleGoToStart();
           break;
 
         case 'end':
           e.preventDefault();
-          goToEnd();
+          handleGoToEnd();
           break;
 
         case 'm':
@@ -257,7 +468,7 @@ const ProgramMonitor: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [shouldHandleKeyboard, handleJ, handleK, handleL, handlePlayPause, stepFrame, goToStart, goToEnd, fps, isMuted]);
+  }, [shouldHandleKeyboard, handlePlayPause, handleFrameStep, handleGoToStart, handleGoToEnd, handlePlay, isPlaying, isMuted]);
 
   // Set active pane when clicked
   const handlePaneClick = useCallback(() => {
@@ -277,13 +488,11 @@ const ProgramMonitor: React.FC = () => {
 
   // Handle timecode input change
   const handleTimecodeChange = useCallback((newTime: number) => {
-    // Pause if playing
-    const state = playbackStateRef.current;
-    if (state?.isPlaying) {
-      pause();
+    if (isPlaying) {
+      handlePause();
     }
-    seek(newTime);
-  }, [playbackStateRef, pause, seek]);
+    handleSeek(newTime);
+  }, [isPlaying, handlePause, handleSeek]);
 
   // Cancel loading dialog
   const handleCancelLoading = useCallback(() => {
@@ -294,10 +503,9 @@ const ProgramMonitor: React.FC = () => {
   useEffect(() => {
     if (showLoadingDialog && previewReady) {
       setShowLoadingDialog(false);
-      play();
-      dispatch(setPlayingPane('program'));
+      handlePlay();
     }
-  }, [showLoadingDialog, previewReady, play, dispatch]);
+  }, [showLoadingDialog, previewReady, handlePlay]);
 
   // Calculate playhead percentage for scrub bar
   const playheadPercent = timelineDuration > 0 ? (playheadPosition / timelineDuration) * 100 : 0;
@@ -307,16 +515,10 @@ const ProgramMonitor: React.FC = () => {
     ? `file:///${preview.filePath.replace(/\\/g, '/')}`
     : '';
 
-  // Get display state from playback state ref
-  const state = playbackStateRef.current;
-  const isPlaying = state?.isPlaying ?? false;
-  const playbackSpeed = state?.playbackSpeed ?? 1;
-  const playbackDirection = state?.direction ?? 0;
-
   return (
     <div className="program-monitor" onClick={handlePaneClick}>
       <div className="program-video-container" ref={containerRef}>
-        {/* Video element - primary display (hardware accelerated) */}
+        {/* Video element - for continuous playback (hardware accelerated) */}
         {previewSrc && (
           <video
             key={previewSrc}
@@ -328,21 +530,22 @@ const ProgramMonitor: React.FC = () => {
               width: displaySize.width,
               height: displaySize.height,
               backgroundColor,
+              display: displayMode === 'video' ? 'block' : 'none',
             }}
           />
         )}
 
-        {/* Canvas overlay - for future UI elements (markers, safe zones, waveforms) */}
-        {/* Positioned above video, transparent, only draws UI elements */}
+        {/* Canvas - for pause/scrub display (full quality from source) */}
         <canvas
           ref={canvasRef}
-          width={seqWidth}
-          height={seqHeight}
-          className="program-canvas-overlay"
+          width={fullWidth}
+          height={fullHeight}
+          className="program-preview-canvas"
           style={{
             width: displaySize.width,
             height: displaySize.height,
-            pointerEvents: 'none', // Don't block mouse events to video
+            backgroundColor,
+            display: displayMode === 'canvas' ? 'block' : 'none',
           }}
         />
 
@@ -363,6 +566,13 @@ const ProgramMonitor: React.FC = () => {
                 Cancel
               </button>
             </div>
+          </div>
+        )}
+
+        {/* Frame extraction indicator */}
+        {previewState.isExtracting && displayMode === 'canvas' && (
+          <div className="program-extracting-indicator">
+            <Loader className="extracting-spinner" size={16} />
           </div>
         )}
 
@@ -409,29 +619,24 @@ const ProgramMonitor: React.FC = () => {
         </div>
 
         <div className="transport-center">
-          <button onClick={goToStart} title="Go to Start (Home)">
+          <button onClick={handleGoToStart} title="Go to Start (Home)">
             <ChevronsLeft size={16} />
           </button>
-          <button onClick={() => stepFrame(-1, fps)} title="Step Back (Left Arrow)">
+          <button onClick={() => handleFrameStep(-1)} title="Step Back (Left Arrow)">
             <SkipBack size={16} />
           </button>
           <button onClick={handlePlayPause} className="play-button" title="Play/Pause (Space)">
             {isPlaying ? <Pause size={20} /> : <Play size={20} />}
           </button>
-          <button onClick={() => stepFrame(1, fps)} title="Step Forward (Right Arrow)">
+          <button onClick={() => handleFrameStep(1)} title="Step Forward (Right Arrow)">
             <SkipForward size={16} />
           </button>
-          <button onClick={goToEnd} title="Go to End (End)">
+          <button onClick={handleGoToEnd} title="Go to End (End)">
             <ChevronsRight size={16} />
           </button>
         </div>
 
         <div className="transport-right">
-          {playbackDirection !== 0 && (
-            <span className="playback-speed">
-              {playbackDirection === -1 && '←'}{playbackSpeed}x{playbackDirection === 1 && '→'}
-            </span>
-          )}
           {previewRendering && (
             <span className="render-status" title="Background rendering in progress">
               {renderProgress.toFixed(1)}%

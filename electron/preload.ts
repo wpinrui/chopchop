@@ -120,6 +120,88 @@ const electronAPI = {
       ipcRenderer.on('preview:proxyGenerated', handler);
       return () => ipcRenderer.removeListener('preview:proxyGenerated', handler);
     },
+
+    // ========================================================================
+    // HYBRID PREVIEW SYSTEM (New)
+    // ========================================================================
+
+    // Initialize the hybrid preview engine
+    init: (options: {
+      timeline: any;
+      media: any[];
+      settings: any;
+      duration: number;
+      projectPath: string | null;
+    }) => ipcRenderer.invoke('preview:init', options),
+
+    // Update timeline after edits
+    updateTimeline: (options: {
+      timeline: any;
+      media: any[];
+      settings: any;
+      duration: number;
+    }) => ipcRenderer.invoke('preview:updateTimeline', options),
+
+    // Extract a single frame (for scrub/pause) - returns RGBA pixel data
+    extractFrame: (time: number) => ipcRenderer.invoke('preview:extractFrame', time),
+
+    // Scrub mode
+    scrubStart: (time: number) => ipcRenderer.invoke('preview:scrubStart', time),
+    scrubUpdate: (time: number, velocity: number) =>
+      ipcRenderer.invoke('preview:scrubUpdate', { time, velocity }),
+    scrubEnd: () => ipcRenderer.invoke('preview:scrubEnd'),
+
+    // Frame stepping (for accurate cutting)
+    frameStep: (direction: -1 | 1) => ipcRenderer.invoke('preview:frameStep', direction),
+
+    // Get playback info (realtime vs cached chunk)
+    getPlaybackInfo: (time: number) => ipcRenderer.invoke('preview:getPlaybackInfo', time),
+
+    // Get clip info for realtime playback
+    getClipAtTime: (time: number) => ipcRenderer.invoke('preview:getClipAtTime', time),
+
+    // Prioritize chunks near playhead for background rendering
+    prioritizeChunks: (time: number) => ipcRenderer.invoke('preview:prioritizeChunks', time),
+
+    // Invalidate chunks in a time range (after edits)
+    invalidateRange: (startTime: number, endTime: number) =>
+      ipcRenderer.invoke('preview:invalidateRange', { startTime, endTime }),
+
+    // Clear all preview cache
+    clearAllCache: () => ipcRenderer.invoke('preview:clearAllCache'),
+
+    // Get cache statistics
+    getCacheStats: () => ipcRenderer.invoke('preview:getCacheStats'),
+
+    // Get current chunks status
+    getChunks: () => ipcRenderer.invoke('preview:getChunks'),
+
+    // Listen for chunk status updates
+    onChunksUpdate: (callback: (chunks: Array<{
+      index: number;
+      startTime: number;
+      endTime: number;
+      status: string;
+      filePath: string | null;
+      isComplex: boolean;
+    }>) => void) => {
+      const handler = (_event: any, chunks: any) => callback(chunks);
+      ipcRenderer.on('preview:chunksUpdate', handler);
+      return () => ipcRenderer.removeListener('preview:chunksUpdate', handler);
+    },
+
+    // Listen for audio snippets (for scrub audio)
+    onAudioSnippet: (callback: (data: {
+      time: number;
+      duration: number;
+      sampleRate: number;
+      channels: number;
+      audioData: ArrayBuffer;
+    }) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('preview:audioSnippet', handler);
+      return () => ipcRenderer.removeListener('preview:audioSnippet', handler);
+    },
   },
 
   // App settings
@@ -188,13 +270,13 @@ const electronAPI = {
       ipcRenderer.on('menu:resetLayout', callback);
       return () => ipcRenderer.removeListener('menu:resetLayout', callback);
     },
-    onRegenerateProxies: (callback: () => void) => {
-      ipcRenderer.on('menu:regenerateProxies', callback);
-      return () => ipcRenderer.removeListener('menu:regenerateProxies', callback);
+    onRegeneratePreview: (callback: () => void) => {
+      ipcRenderer.on('menu:regeneratePreview', callback);
+      return () => ipcRenderer.removeListener('menu:regeneratePreview', callback);
     },
-    onClearProxies: (callback: () => void) => {
-      ipcRenderer.on('menu:clearProxies', callback);
-      return () => ipcRenderer.removeListener('menu:clearProxies', callback);
+    onClearPreviewCache: (callback: () => void) => {
+      ipcRenderer.on('menu:clearPreviewCache', callback);
+      return () => ipcRenderer.removeListener('menu:clearPreviewCache', callback);
     },
   },
 };
