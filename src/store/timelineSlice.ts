@@ -127,7 +127,7 @@ const timelineSlice = createSlice({
     },
 
     // Load/reset
-    loadTimeline: (state, action: PayloadAction<Timeline>) => {
+    loadTimeline: (_state, action: PayloadAction<Timeline>) => {
       return action.payload;
     },
 

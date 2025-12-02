@@ -84,6 +84,10 @@ const App: React.FC = () => {
 
       dispatch(setProjectPath(filePath));
       dispatch(markClean());
+
+      // Save as recent project
+      await window.electronAPI.settings.setRecentProject(filePath);
+
       setStatusMessage('Project saved');
 
       // Reset status after 2 seconds
@@ -116,12 +120,9 @@ const App: React.FC = () => {
     }
   }, [projectName, saveProjectToFile]);
 
-  // Open project (Ctrl+O)
-  const handleOpen = useCallback(async () => {
+  // Load project from a specific path
+  const loadProjectFromPath = useCallback(async (filePath: string) => {
     try {
-      const filePath = await window.electronAPI.project.showOpenDialog();
-      if (!filePath) return;
-
       setStatusMessage('Loading project...');
 
       const content = await window.electronAPI.file.readText(filePath);
@@ -148,6 +149,9 @@ const App: React.FC = () => {
       }));
 
       tracksInitialized.current = true; // Don't re-add default tracks
+
+      // Save as recent project
+      await window.electronAPI.settings.setRecentProject(filePath);
 
       setStatusMessage('Regenerating thumbnails...');
 
@@ -181,11 +185,20 @@ const App: React.FC = () => {
       dispatch(markClean()); // Mark clean after regeneration
       setStatusMessage('Project loaded');
       setTimeout(() => setStatusMessage('Ready'), 2000);
+      return true;
     } catch (error) {
       console.error('Failed to open project:', error);
       setStatusMessage('Failed to open project');
+      return false;
     }
   }, [dispatch]);
+
+  // Open project (Ctrl+O)
+  const handleOpen = useCallback(async () => {
+    const filePath = await window.electronAPI.project.showOpenDialog();
+    if (!filePath) return;
+    await loadProjectFromPath(filePath);
+  }, [loadProjectFromPath]);
 
   // Export (Ctrl+M)
   const handleExport = useCallback(() => {
@@ -220,6 +233,89 @@ const App: React.FC = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Only run once on mount
+
+  // Handle menu events from main process
+  useEffect(() => {
+    const cleanups = [
+      window.electronAPI.menu.onNewProject(() => {
+        // TODO: Create new project, with confirmation if dirty
+        setStatusMessage('New Project (not implemented yet)');
+      }),
+      window.electronAPI.menu.onOpenProject(handleOpen),
+      window.electronAPI.menu.onOpenRecent(async () => {
+        const recentPath = await window.electronAPI.settings.getRecentProject();
+        if (recentPath) {
+          await loadProjectFromPath(recentPath);
+        }
+      }),
+      window.electronAPI.menu.onSave(handleSave),
+      window.electronAPI.menu.onSaveAs(handleSaveAs),
+      window.electronAPI.menu.onImportMedia(() => {
+        mediaBinRef.current?.triggerImport();
+      }),
+      window.electronAPI.menu.onExport(handleExport),
+      // TODO: Connect undo/redo to Redux history
+      window.electronAPI.menu.onUndo(() => {
+        setStatusMessage('Undo (not implemented yet)');
+      }),
+      window.electronAPI.menu.onRedo(() => {
+        setStatusMessage('Redo (not implemented yet)');
+      }),
+    ];
+
+    return () => cleanups.forEach(cleanup => cleanup());
+  }, [handleOpen, handleSave, handleSaveAs, handleExport, loadProjectFromPath]);
+
+  // Handle unsaved changes check when closing
+  useEffect(() => {
+    const cleanup = window.electronAPI.app.onCheckUnsavedChanges(async () => {
+      if (!projectDirty) {
+        // No unsaved changes, allow close
+        window.electronAPI.app.sendCloseResponse('discard');
+        return;
+      }
+
+      // Show save dialog
+      const response = await window.electronAPI.app.showUnsavedChangesDialog();
+
+      if (response === 'save') {
+        // Save the project first
+        if (projectPath) {
+          await saveProjectToFile(projectPath);
+        } else {
+          const filePath = await window.electronAPI.project.showSaveDialog(projectName + '.chpchp');
+          if (filePath) {
+            await saveProjectToFile(filePath);
+          } else {
+            // User cancelled save dialog, cancel close
+            window.electronAPI.app.sendCloseResponse('cancel');
+            return;
+          }
+        }
+        // After saving, allow close
+        window.electronAPI.app.sendCloseResponse('discard');
+      } else if (response === 'discard') {
+        // User chose not to save, allow close
+        window.electronAPI.app.sendCloseResponse('discard');
+      } else {
+        // User cancelled
+        window.electronAPI.app.sendCloseResponse('cancel');
+      }
+    });
+
+    return cleanup;
+  }, [projectDirty, projectPath, projectName, saveProjectToFile]);
+
+  // Handle recent project notification on app start
+  useEffect(() => {
+    const cleanup = window.electronAPI.app.onRecentProject(async (recentPath: string) => {
+      // Automatically try to load the recent project
+      setStatusMessage(`Loading recent project: ${recentPath.split(/[\\/]/).pop()}`);
+      await loadProjectFromPath(recentPath);
+    });
+
+    return cleanup;
+  }, [loadProjectFromPath]);
 
   // Global keyboard shortcuts
   useEffect(() => {

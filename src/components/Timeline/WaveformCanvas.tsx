@@ -61,8 +61,6 @@ const WaveformCanvas: React.FC<WaveformCanvasProps> = ({
 
     // Draw one vertical line per pixel (or per 2 pixels for performance at very high zoom)
     const pixelStep = width > 2000 ? 2 : 1;
-    const samplesPerPixel = dataLength / width;
-
     for (let x = 0; x < width; x += pixelStep) {
       // Calculate which samples this pixel represents
       const sampleStart = startIndex + (x / width) * dataLength;

@@ -57,6 +57,70 @@ const electronAPI = {
       return () => ipcRenderer.removeListener('export:progress', handler);
     },
   },
+
+  // App settings
+  settings: {
+    setRecentProject: (projectPath: string | null) =>
+      ipcRenderer.invoke('settings:setRecentProject', projectPath),
+    getRecentProject: () => ipcRenderer.invoke('settings:getRecentProject'),
+  },
+
+  // App lifecycle
+  app: {
+    showUnsavedChangesDialog: () => ipcRenderer.invoke('app:showUnsavedChangesDialog'),
+    sendCloseResponse: (response: 'save' | 'discard' | 'cancel') =>
+      ipcRenderer.send('app:closeResponse', response),
+    onCheckUnsavedChanges: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on('app:checkUnsavedChanges', handler);
+      return () => ipcRenderer.removeListener('app:checkUnsavedChanges', handler);
+    },
+    onRecentProject: (callback: (path: string) => void) => {
+      const handler = (_event: any, path: string) => callback(path);
+      ipcRenderer.on('app:recentProject', handler);
+      return () => ipcRenderer.removeListener('app:recentProject', handler);
+    },
+  },
+
+  // Menu events from main process
+  menu: {
+    onNewProject: (callback: () => void) => {
+      ipcRenderer.on('menu:newProject', callback);
+      return () => ipcRenderer.removeListener('menu:newProject', callback);
+    },
+    onOpenProject: (callback: () => void) => {
+      ipcRenderer.on('menu:openProject', callback);
+      return () => ipcRenderer.removeListener('menu:openProject', callback);
+    },
+    onOpenRecent: (callback: () => void) => {
+      ipcRenderer.on('menu:openRecent', callback);
+      return () => ipcRenderer.removeListener('menu:openRecent', callback);
+    },
+    onSave: (callback: () => void) => {
+      ipcRenderer.on('menu:save', callback);
+      return () => ipcRenderer.removeListener('menu:save', callback);
+    },
+    onSaveAs: (callback: () => void) => {
+      ipcRenderer.on('menu:saveAs', callback);
+      return () => ipcRenderer.removeListener('menu:saveAs', callback);
+    },
+    onImportMedia: (callback: () => void) => {
+      ipcRenderer.on('menu:importMedia', callback);
+      return () => ipcRenderer.removeListener('menu:importMedia', callback);
+    },
+    onExport: (callback: () => void) => {
+      ipcRenderer.on('menu:export', callback);
+      return () => ipcRenderer.removeListener('menu:export', callback);
+    },
+    onUndo: (callback: () => void) => {
+      ipcRenderer.on('menu:undo', callback);
+      return () => ipcRenderer.removeListener('menu:undo', callback);
+    },
+    onRedo: (callback: () => void) => {
+      ipcRenderer.on('menu:redo', callback);
+      return () => ipcRenderer.removeListener('menu:redo', callback);
+    },
+  },
 };
 
 // Expose the API to the renderer process

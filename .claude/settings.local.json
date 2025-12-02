@@ -14,7 +14,8 @@
       "Bash(npm run lint:types:*)",
       "Bash(timeout /t 8 /nobreak)",
       "Bash(Remove-Item -Path \"dist-electron\" -Recurse -Force -ErrorAction SilentlyContinue)",
-      "Bash(Remove-Item -Path \"dist\" -Recurse -Force -ErrorAction SilentlyContinue)"
+      "Bash(Remove-Item -Path \"dist\" -Recurse -Force -ErrorAction SilentlyContinue)",
+      "Bash(npx tsc:*)"
     ],
     "deny": [],
     "ask": []

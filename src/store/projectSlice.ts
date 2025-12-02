@@ -68,7 +68,7 @@ const projectSlice = createSlice({
     },
 
     // Load/reset
-    loadProject: (state, action: PayloadAction<Project>) => {
+    loadProject: (_state, action: PayloadAction<Project>) => {
       return { ...action.payload, dirty: false };
     },
 

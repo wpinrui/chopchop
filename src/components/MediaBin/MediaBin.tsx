@@ -16,7 +16,7 @@ export interface MediaBinHandle {
   triggerImport: () => void;
 }
 
-const MediaBin = forwardRef<MediaBinHandle>((props, ref) => {
+const MediaBin = forwardRef<MediaBinHandle>((_props, ref) => {
   const dispatch = useDispatch();
   const media = useSelector((state: RootState) => state.project.media);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -133,7 +133,7 @@ const MediaBin = forwardRef<MediaBinHandle>((props, ref) => {
     // Process each dropped file
     for (const file of files) {
       try {
-        const filePath = file.path; // Electron provides the full path
+        const filePath = (file as File & { path: string }).path; // Electron provides the full path
 
         const probeResult = await window.electronAPI.media.probe(filePath);
 
