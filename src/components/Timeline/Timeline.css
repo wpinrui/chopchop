@@ -150,6 +150,7 @@
   background-color: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
   width: 100%;
+  cursor: pointer;
 }
 
 .ruler-marker {

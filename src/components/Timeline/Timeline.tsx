@@ -74,17 +74,69 @@ const Timeline: React.FC = () => {
     if (!timelineRef.current) return;
 
     const rect = timelineRef.current.getBoundingClientRect();
+    // getBoundingClientRect already accounts for scroll, so don't add scrollLeft
     const clickX = e.clientX - rect.left;
-    const newTime = pixelsToTime(clickX + scrollLeft);
+    const newTime = Math.max(0, clickX / (basePixelsPerSecond * zoom));
 
-    dispatch(setPlayheadPosition(Math.max(0, newTime)));
-  }, [dispatch, scrollLeft, pixelsToTime]);
+    dispatch(setPlayheadPosition(newTime));
+  }, [dispatch, zoom]);
 
-  // Playhead dragging
+  // Scrub playhead (shared by playhead drag and ruler click)
+  const startPlayheadScrub = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+
+    // Move playhead to initial click position
+    if (timelineRef.current) {
+      const rect = timelineRef.current.getBoundingClientRect();
+      // getBoundingClientRect already accounts for scroll, so don't add scrollLeft
+      const mouseX = e.clientX - rect.left;
+      const newTime = Math.max(0, mouseX / (basePixelsPerSecond * zoom));
+      dispatch(setPlayheadPosition(newTime));
+    }
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      if (!timelineRef.current) return;
+
+      const rect = timelineRef.current.getBoundingClientRect();
+      const mouseX = moveEvent.clientX - rect.left;
+      const newTime = Math.max(0, mouseX / (basePixelsPerSecond * zoom));
+
+      dispatch(setPlayheadPosition(newTime));
+    };
+
+    const onMouseUp = () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  }, [dispatch, zoom]);
+
+  // Playhead handle drag (doesn't move on initial click, just drags)
   const handlePlayheadMouseDown = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
-    // TODO: Implement playhead dragging
-  }, []);
+    e.preventDefault();
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      if (!timelineRef.current) return;
+
+      const rect = timelineRef.current.getBoundingClientRect();
+      const mouseX = moveEvent.clientX - rect.left;
+      const newTime = Math.max(0, mouseX / (basePixelsPerSecond * zoom));
+
+      dispatch(setPlayheadPosition(newTime));
+    };
+
+    const onMouseUp = () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  }, [dispatch, zoom]);
 
   // Handle drop from MediaBin
   const handleTrackDrop = useCallback((e: React.DragEvent, trackId: string) => {
@@ -162,6 +214,44 @@ const Timeline: React.FC = () => {
     setScrollLeft(e.currentTarget.scrollLeft);
   }, []);
 
+  // Zoom with centering on playhead (if visible)
+  const zoomWithPlayheadCenter = useCallback((newZoom: number) => {
+    if (!scrollContainerRef.current) {
+      setZoom(newZoom);
+      return;
+    }
+
+    const container = scrollContainerRef.current;
+    const currentScrollLeft = container.scrollLeft;
+    const containerWidth = container.clientWidth;
+
+    // Calculate playhead position in current zoom
+    const playheadPixels = playhead * basePixelsPerSecond * zoom;
+
+    // Check if playhead is visible in viewport
+    const playheadViewportOffset = playheadPixels - currentScrollLeft;
+    const isPlayheadVisible = playheadViewportOffset >= 0 && playheadViewportOffset <= containerWidth;
+
+    if (isPlayheadVisible) {
+      // Calculate new playhead position at new zoom
+      const newPlayheadPixels = playhead * basePixelsPerSecond * newZoom;
+
+      // Adjust scroll to keep playhead at same viewport position
+      const newScrollLeft = newPlayheadPixels - playheadViewportOffset;
+
+      setZoom(newZoom);
+
+      // Need to update scroll after state update
+      requestAnimationFrame(() => {
+        if (scrollContainerRef.current) {
+          scrollContainerRef.current.scrollLeft = Math.max(0, newScrollLeft);
+        }
+      });
+    } else {
+      setZoom(newZoom);
+    }
+  }, [zoom, playhead]);
+
   // Handle wheel events: scroll horizontally or Ctrl+wheel to zoom
   const handleWheel = useCallback((e: React.WheelEvent) => {
     if (e.ctrlKey) {
@@ -171,11 +261,9 @@ const Timeline: React.FC = () => {
       // Multiplicative zoom: each scroll "tick" multiplies by a small factor
       // Negative deltaY = scroll up = zoom in, positive = scroll down = zoom out
       const scrollFactor = Math.pow(1.002, -e.deltaY);
+      const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom * scrollFactor));
 
-      setZoom(prev => {
-        const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, prev * scrollFactor));
-        return newZoom;
-      });
+      zoomWithPlayheadCenter(newZoom);
     } else {
       // Normal scroll = horizontal scroll
       e.preventDefault();
@@ -185,11 +273,18 @@ const Timeline: React.FC = () => {
         scrollContainerRef.current.scrollLeft = newScrollLeft;
       }
     }
-  }, []);
+  }, [zoom, zoomWithPlayheadCenter]);
 
   // Handle button zoom (exponential steps)
-  const handleZoomIn = () => setZoom(prev => Math.min(prev * ZOOM_FACTOR, MAX_ZOOM));
-  const handleZoomOut = () => setZoom(prev => Math.max(prev / ZOOM_FACTOR, MIN_ZOOM));
+  const handleZoomIn = useCallback(() => {
+    const newZoom = Math.min(zoom * ZOOM_FACTOR, MAX_ZOOM);
+    zoomWithPlayheadCenter(newZoom);
+  }, [zoom, zoomWithPlayheadCenter]);
+
+  const handleZoomOut = useCallback(() => {
+    const newZoom = Math.max(zoom / ZOOM_FACTOR, MIN_ZOOM);
+    zoomWithPlayheadCenter(newZoom);
+  }, [zoom, zoomWithPlayheadCenter]);
 
   return (
     <div className="timeline">
@@ -234,8 +329,8 @@ const Timeline: React.FC = () => {
             onClick={handleTimelineClick}
             style={{ width: `${timelineWidth}px` }}
           >
-              {/* Time ruler */}
-              <div className="timeline-ruler">
+              {/* Time ruler - click to move playhead, drag to scrub */}
+              <div className="timeline-ruler" onMouseDown={startPlayheadScrub}>
                 {Array.from({ length: Math.ceil(maxDuration / rulerInterval) }).map((_, i) => {
                   const seconds = i * rulerInterval;
                   const position = timeToPixels(seconds);
