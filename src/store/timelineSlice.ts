@@ -86,12 +86,38 @@ const timelineSlice = createSlice({
       state,
       action: PayloadAction<{ id: string; updates: Partial<Clip> }>
     ) => {
+      const { id, updates } = action.payload;
+
+      // Find the clip and its current track
+      let sourceTrack: Track | undefined;
+      let clipIndex = -1;
       for (const track of state.tracks) {
-        const clip = track.clips.find((c) => c.id === action.payload.id);
-        if (clip) {
-          Object.assign(clip, action.payload.updates);
+        const idx = track.clips.findIndex((c) => c.id === id);
+        if (idx !== -1) {
+          sourceTrack = track;
+          clipIndex = idx;
           break;
         }
+      }
+
+      if (!sourceTrack || clipIndex === -1) return;
+
+      const clip = sourceTrack.clips[clipIndex];
+
+      // Check if we're moving to a different track
+      if (updates.trackId && updates.trackId !== sourceTrack.id) {
+        const targetTrack = state.tracks.find(t => t.id === updates.trackId);
+        if (targetTrack) {
+          // Remove from source track
+          sourceTrack.clips.splice(clipIndex, 1);
+          // Update clip properties
+          Object.assign(clip, updates);
+          // Add to target track
+          targetTrack.clips.push(clip);
+        }
+      } else {
+        // Just update properties in place
+        Object.assign(clip, updates);
       }
     },
 

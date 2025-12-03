@@ -1253,6 +1253,12 @@ const Timeline: React.FC = () => {
                 draggingClip.sourceTrackId !== track.id &&
                 !isValidDropTarget;
 
+              // Show ghost on target track during cross-track drag
+              const showCrossTrackGhost = isCurrentDropTarget && draggingClip;
+              const crossTrackGhostClip = showCrossTrackGhost
+                ? tracks.flatMap(t => t.clips).find(c => c.id === draggingClip.id)
+                : null;
+
               return (
               <div
                 key={track.id}
@@ -1261,7 +1267,7 @@ const Timeline: React.FC = () => {
                 onDrop={(e) => handleTrackDrop(e, track.id)}
                 onContextMenu={(e) => handleTrackContextMenu(e, track.id)}
               >
-                {/* Ghost clip preview during drag */}
+                {/* Ghost clip preview during drag from source */}
                 {showGhost && (
                   <div
                     className={`clip ghost-clip ${track.type === 'video' ? 'video-clip' : 'audio-clip'}`}
@@ -1273,6 +1279,23 @@ const Timeline: React.FC = () => {
                     <div className="clip-content">
                       <div className="clip-info">
                         <span className="clip-name">{ghostMedia?.name || 'Clip'}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Ghost clip preview during cross-track drag */}
+                {showCrossTrackGhost && crossTrackGhostClip && (
+                  <div
+                    className={`clip ghost-clip ${track.type === 'video' ? 'video-clip' : 'audio-clip'}`}
+                    style={{
+                      left: `${timeToPixels(crossTrackGhostClip.timelineStart)}px`,
+                      width: `${timeToPixels(crossTrackGhostClip.duration)}px`,
+                    }}
+                  >
+                    <div className="clip-content">
+                      <div className="clip-info">
+                        <span className="clip-name">{crossTrackGhostClip.name}</span>
                       </div>
                     </div>
                   </div>

@@ -580,9 +580,77 @@ const ProgramMonitor: React.FC = () => {
       }
     }
 
+    // Check if we're in a gap - find the next clip
+    const allClips = tracks
+      .filter(t => t.type === 'video' && t.visible !== false)
+      .flatMap(t => t.clips)
+      .filter(c => c.enabled !== false);
+
+    // Find the next clip that starts after boundaryTime
+    const nextClipStart = allClips
+      .map(c => c.timelineStart)
+      .filter(start => start > boundaryTime)
+      .sort((a, b) => a - b)[0];
+
+    if (nextClipStart !== undefined && nextClipStart < timelineDuration) {
+      // There's a gap followed by another clip - play through the gap
+      const sourceVideo = sourceVideoRef.current;
+      if (sourceVideo) {
+        sourceVideo.pause();
+      }
+
+      // Set up gap playback info
+      setSourcePlaybackInfo({
+        enabled: true,
+        mediaPath: '', // Empty = gap
+        clipStart: boundaryTime,
+        clipEnd: nextClipStart,
+        mediaOffset: 0,
+      });
+
+      // Start a timer to advance through the gap
+      const startRealTime = performance.now();
+
+      const advanceGap = () => {
+        if (!isPlaying) return;
+
+        const elapsed = (performance.now() - startRealTime) / 1000 * playbackSpeed;
+        const currentGapTime = boundaryTime + elapsed;
+
+        if (currentGapTime >= nextClipStart) {
+          // Gap ended - transition to next clip
+          handleClipBoundary(nextClipStart);
+        } else {
+          // Still in gap - update playhead and show black
+          dispatch(setPlayheadPosition(currentGapTime));
+          requestAnimationFrame(advanceGap);
+        }
+      };
+
+      // Clear canvas to black for gap
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.fillStyle = 'black';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+      }
+
+      requestAnimationFrame(advanceGap);
+      return;
+    }
+
+    // No more clips - check if we've reached timeline end
+    if (boundaryTime >= timelineDuration) {
+      handlePause();
+      dispatch(setPlayheadPosition(timelineDuration));
+      return;
+    }
+
     // No more simple clips or hit a complex segment - pause
     handlePause();
-  }, [previewActions, tracks, handlePause]);
+  }, [previewActions, tracks, handlePause, timelineDuration, isPlaying, playbackSpeed, dispatch]);
 
   // Render source video to canvas during source playback
   // This handles resolution mismatch correctly: pad (black bars) for smaller sources, crop for larger sources
