@@ -2,7 +2,8 @@
  * FFmpeg Filter Graph Builder
  *
  * Translates timeline state into ffmpeg filter_complex strings.
- * This is the core logic that converts our UI representation to ffmpeg commands.
+ * Uses overlay-based compositing to support multi-track editing with
+ * overlapping clips, gaps, and proper layering.
  */
 
 // Local type definitions to avoid importing from src/types (causes build issues)
@@ -32,6 +33,8 @@ interface Track {
   type: 'video' | 'audio';
   name: string;
   clips: Clip[];
+  muted?: boolean;
+  visible?: boolean;
 }
 
 interface Timeline {
@@ -78,13 +81,116 @@ export interface FilterGraphResult {
 interface ResolvedClip extends Clip {
   mediaItem: MediaItem;
   inputIndex: number;
+  trackIndex: number;
+}
+
+// =============================================================================
+// Helper Functions
+// =============================================================================
+
+/**
+ * Calculate the total duration of the timeline (max clip end time)
+ */
+function getTimelineDuration(timeline: Timeline): number {
+  let maxEnd = 0;
+  for (const track of timeline.tracks) {
+    for (const clip of track.clips) {
+      if (!clip.enabled) continue;
+      const clipEnd = clip.timelineStart + clip.duration;
+      if (clipEnd > maxEnd) {
+        maxEnd = clipEnd;
+      }
+    }
+  }
+  return maxEnd;
+}
+
+/**
+ * Build a black base layer filter for the entire timeline
+ */
+function buildBlackBase(
+  width: number,
+  height: number,
+  fps: number,
+  duration: number
+): string {
+  return `color=c=black:s=${width}x${height}:r=${fps}:d=${duration}[base]`;
+}
+
+/**
+ * Build a video clip filter chain (trim, setpts, pad/crop, fps, format)
+ * Maintains original dimensions without scaling (per CLAUDE.md requirements)
+ */
+function buildVideoClipFilter(
+  inputIndex: number,
+  clip: ResolvedClip,
+  seqWidth: number,
+  seqHeight: number,
+  fps: number,
+  outputLabel: string
+): string {
+  // Pad + crop to maintain original dimensions centered in sequence frame
+  // - pad ensures clip is at least target size (adds black bars if smaller)
+  // - crop cuts to exact target size (crops centered if larger)
+  const padCrop = `pad=w=max(${seqWidth}\\,iw):h=max(${seqHeight}\\,ih):x=(ow-iw)/2:y=(oh-ih)/2:color=black,crop=${seqWidth}:${seqHeight}:(iw-${seqWidth})/2:(ih-${seqHeight})/2`;
+
+  if (clip.mediaItem.type === 'image') {
+    // Image: loop, trim to duration, normalize
+    return `[${inputIndex}:v]loop=loop=-1:size=1,trim=0:${clip.duration},setpts=PTS-STARTPTS,${padCrop},fps=${fps},format=yuva420p[${outputLabel}]`;
+  } else {
+    // Video: trim to source segment, normalize
+    const trimStart = clip.mediaIn;
+    const trimEnd = clip.mediaOut;
+    return `[${inputIndex}:v]trim=start=${trimStart}:end=${trimEnd},setpts=PTS-STARTPTS,${padCrop},fps=${fps},format=yuva420p[${outputLabel}]`;
+  }
+}
+
+/**
+ * Build an overlay filter with enable expression for timeline positioning
+ */
+function buildOverlayFilter(
+  baseLabel: string,
+  clipLabel: string,
+  clipStart: number,
+  clipEnd: number,
+  outputLabel: string
+): string {
+  const enableExpr = `between(t,${clipStart},${clipEnd})`;
+  return `[${baseLabel}][${clipLabel}]overlay=x=0:y=0:enable='${enableExpr}'[${outputLabel}]`;
+}
+
+/**
+ * Build an audio clip filter chain (trim, setpts, adelay, apad)
+ */
+function buildAudioClipFilter(
+  inputIndex: number,
+  clip: ResolvedClip,
+  timelineDuration: number,
+  sampleRate: number,
+  outputLabel: string
+): string {
+  const trimStart = clip.mediaIn;
+  const trimEnd = clip.mediaOut;
+  const delayMs = Math.round(clip.timelineStart * 1000);
+
+  return `[${inputIndex}:a]atrim=start=${trimStart}:end=${trimEnd},asetpts=PTS-STARTPTS,aresample=${sampleRate},aformat=channel_layouts=stereo,adelay=${delayMs}|${delayMs},apad=whole_dur=${timelineDuration}[${outputLabel}]`;
+}
+
+/**
+ * Build a silent audio source for video-only exports
+ */
+function buildSilentAudio(duration: number, sampleRate: number): string {
+  return `anullsrc=r=${sampleRate}:cl=stereo,atrim=0:${duration}[aout]`;
 }
 
 /**
  * Build a filter graph from timeline state
  *
- * Phase 1: Supports sequential clips on single video/audio tracks
- * Future: Handle layering, effects, transitions
+ * Uses overlay-based compositing to support:
+ * - Multiple video tracks with layering (higher tracks on top)
+ * - Overlapping clips on different tracks
+ * - Gaps in timeline (black base shows through)
+ * - Mixed audio from multiple tracks
  */
 export function buildFilterGraph(
   timeline: Timeline,
@@ -95,15 +201,50 @@ export function buildFilterGraph(
   const inputs: InputDef[] = [];
   const mediaIndexMap = new Map<string, number>();
 
-  // Collect all unique media files used in the timeline
-  const videoTracks = timeline.tracks.filter(t => t.type === 'video');
-  const audioTracks = timeline.tracks.filter(t => t.type === 'audio');
+  // Calculate timeline duration
+  const timelineDuration = getTimelineDuration(timeline);
 
-  // Get all clips sorted by timeline position
+  // Handle edge case: empty timeline
+  if (timelineDuration === 0) {
+    return {
+      inputs: [],
+      filterComplex: '',
+      maps: [],
+      success: false,
+      errors: ['No clips in timeline to export'],
+    };
+  }
+
+  // Get video and audio tracks, filtering out hidden/muted
+  // Reverse video tracks so higher tracks (rendered on top) come last in processing
+  const videoTracks = timeline.tracks
+    .filter(t => t.type === 'video' && t.visible !== false)
+    .reverse();
+  const audioTracks = timeline.tracks
+    .filter(t => t.type === 'audio' && !t.muted);
+
+  // Collect video clips with track index for proper layering
   const videoClips: ResolvedClip[] = [];
   const audioClips: ResolvedClip[] = [];
 
-  for (const track of videoTracks) {
+  // Helper to get or create media input index
+  const getMediaInput = (mediaItem: MediaItem): number => {
+    if (mediaIndexMap.has(mediaItem.id)) {
+      return mediaIndexMap.get(mediaItem.id)!;
+    }
+    const idx = inputs.length;
+    inputs.push({
+      index: idx,
+      path: mediaItem.path,
+      mediaId: mediaItem.id,
+    });
+    mediaIndexMap.set(mediaItem.id, idx);
+    return idx;
+  };
+
+  // Gather video clips from all video tracks
+  for (let trackIdx = 0; trackIdx < videoTracks.length; trackIdx++) {
+    const track = videoTracks[trackIdx];
     for (const clip of track.clips) {
       if (!clip.enabled) continue;
 
@@ -111,28 +252,20 @@ export function buildFilterGraph(
       if (!mediaItem) {
         errors.push(`Media not found for clip: ${clip.name}`);
         continue;
-      }
-
-      // Add media to inputs if not already added
-      if (!mediaIndexMap.has(mediaItem.id)) {
-        const idx = inputs.length;
-        inputs.push({
-          index: idx,
-          path: mediaItem.path,
-          mediaId: mediaItem.id,
-        });
-        mediaIndexMap.set(mediaItem.id, idx);
       }
 
       videoClips.push({
         ...clip,
         mediaItem,
-        inputIndex: mediaIndexMap.get(mediaItem.id)!,
+        inputIndex: getMediaInput(mediaItem),
+        trackIndex: trackIdx,
       });
     }
   }
 
-  for (const track of audioTracks) {
+  // Gather audio clips from all audio tracks
+  for (let trackIdx = 0; trackIdx < audioTracks.length; trackIdx++) {
+    const track = audioTracks[trackIdx];
     for (const clip of track.clips) {
       if (!clip.enabled) continue;
 
@@ -142,36 +275,19 @@ export function buildFilterGraph(
         continue;
       }
 
-      // Add media to inputs if not already added
-      if (!mediaIndexMap.has(mediaItem.id)) {
-        const idx = inputs.length;
-        inputs.push({
-          index: idx,
-          path: mediaItem.path,
-          mediaId: mediaItem.id,
-        });
-        mediaIndexMap.set(mediaItem.id, idx);
-      }
+      // Skip images for audio
+      if (mediaItem.type === 'image') continue;
 
       audioClips.push({
         ...clip,
         mediaItem,
-        inputIndex: mediaIndexMap.get(mediaItem.id)!,
+        inputIndex: getMediaInput(mediaItem),
+        trackIndex: trackIdx,
       });
     }
   }
 
-  // Sort clips by timeline start
-  videoClips.sort((a, b) => a.timelineStart - b.timelineStart);
-  audioClips.sort((a, b) => a.timelineStart - b.timelineStart);
-
-  // Build filter complex
-  let filterComplex = '';
-  const videoOutputs: string[] = [];
-  const audioOutputs: string[] = [];
-
-  // Determine target resolution and frame rate for normalization
-  // This is critical for concat to work with mixed-format sources
+  // Determine target resolution and frame rate
   let targetWidth = 1920;
   let targetHeight = 1080;
   let targetFps = 30;
@@ -185,108 +301,105 @@ export function buildFilterGraph(
     targetFps = settings.frameRate;
   }
 
-  // Get audio settings for normalization
-  const targetSampleRate = settings.audioCodecOptions?.ar || 48000;
+  // Get audio settings
+  const targetSampleRate = Number(settings.audioCodecOptions?.ar) || 48000;
 
-  // Process video clips - normalize resolution, fps, and pixel format for concat compatibility
-  for (let i = 0; i < videoClips.length; i++) {
-    const clip = videoClips[i];
-    const inputIdx = clip.inputIndex;
-    const outputLabel = `v${i}`;
+  // Build filter complex using overlay approach
+  const filterParts: string[] = [];
 
-    // Build normalization filter chain:
-    // 1. Trim to clip segment
-    // 2. Reset PTS
-    // 3. Maintain original dimensions (pad if smaller, crop if larger, centered)
-    // 4. Set consistent frame rate
-    // 5. Set consistent pixel format (yuv420p for maximum compatibility)
-    // Note: Using pad+crop to maintain original clip dimensions without scaling
-    // - pad ensures clip is at least target size (adds black bars if smaller)
-    // - crop cuts to exact target size (crops centered if larger)
-    const maintainDimFilter = `pad=w=max(${targetWidth}\\,iw):h=max(${targetHeight}\\,ih):x=(ow-iw)/2:y=(oh-ih)/2:color=black,crop=${targetWidth}:${targetHeight}:(iw-${targetWidth})/2:(ih-${targetHeight})/2`;
-    const fpsFilter = `fps=${targetFps}`;
-    const formatFilter = 'format=yuv420p';
+  // Create black base layer for entire timeline
+  filterParts.push(buildBlackBase(targetWidth, targetHeight, targetFps, timelineDuration));
 
-    // Handle image files (loop them)
-    if (clip.mediaItem.type === 'image') {
-      filterComplex += `[${inputIdx}:v]loop=loop=-1:size=1,trim=0:${clip.duration},setpts=PTS-STARTPTS,${maintainDimFilter},${fpsFilter},${formatFilter}[${outputLabel}];\n`;
-    } else {
-      // Video file - trim to clip segment and normalize
-      const trimStart = clip.mediaIn;
-      const trimEnd = clip.mediaOut;
-      filterComplex += `[${inputIdx}:v]trim=start=${trimStart}:end=${trimEnd},setpts=PTS-STARTPTS,${maintainDimFilter},${fpsFilter},${formatFilter}[${outputLabel}];\n`;
-    }
+  let currentBase = 'base';
+  let videoIdx = 0;
 
-    videoOutputs.push(`[${outputLabel}]`);
+  // Process video clips in track order (lower tracks first, higher overlay on top)
+  for (const clip of videoClips) {
+    const clipLabel = `v${videoIdx}`;
+    const overlayLabel = `comp${videoIdx}`;
+
+    // Build clip filter (trim, normalize dimensions, fps, format)
+    filterParts.push(
+      buildVideoClipFilter(
+        clip.inputIndex,
+        clip,
+        targetWidth,
+        targetHeight,
+        targetFps,
+        clipLabel
+      )
+    );
+
+    // Build overlay with enable expression for timeline positioning
+    const clipEnd = clip.timelineStart + clip.duration;
+    filterParts.push(
+      buildOverlayFilter(
+        currentBase,
+        clipLabel,
+        clip.timelineStart,
+        clipEnd,
+        overlayLabel
+      )
+    );
+
+    currentBase = overlayLabel;
+    videoIdx++;
   }
 
-  // Process audio clips - normalize sample rate and channels for concat compatibility
+  // Finalize video output
+  if (videoIdx > 0) {
+    // Rename final overlay output to [vout]
+    const lastFilter = filterParts[filterParts.length - 1];
+    filterParts[filterParts.length - 1] = lastFilter.replace(
+      `[${currentBase}]`,
+      '[vout]'
+    );
+  } else {
+    // No video clips - use base directly
+    filterParts.push('[base]null[vout]');
+  }
+
+  // Process audio clips
+  const audioLabels: string[] = [];
+
   for (let i = 0; i < audioClips.length; i++) {
     const clip = audioClips[i];
-    const inputIdx = clip.inputIndex;
-    const outputLabel = `a${i}`;
+    const audioLabel = `a${i}`;
 
-    // Skip images for audio
-    if (clip.mediaItem.type === 'image') continue;
+    filterParts.push(
+      buildAudioClipFilter(
+        clip.inputIndex,
+        clip,
+        timelineDuration,
+        targetSampleRate,
+        audioLabel
+      )
+    );
 
-    const trimStart = clip.mediaIn;
-    const trimEnd = clip.mediaOut;
-    // Normalize audio: trim, reset pts, resample, set channels
-    filterComplex += `[${inputIdx}:a]atrim=start=${trimStart}:end=${trimEnd},asetpts=PTS-STARTPTS,aresample=${targetSampleRate},aformat=channel_layouts=stereo[${outputLabel}];\n`;
-
-    audioOutputs.push(`[${outputLabel}]`);
+    audioLabels.push(`[${audioLabel}]`);
   }
 
-  // Concat video clips
-  if (videoOutputs.length > 1) {
-    filterComplex += `${videoOutputs.join('')}concat=n=${videoOutputs.length}:v=1:a=0[vout];\n`;
-  } else if (videoOutputs.length === 1) {
-    // Single clip - just rename output
-    filterComplex = filterComplex.replace(/\[v0\];\n$/, '[vout];\n');
+  // Mix audio or generate silence
+  if (audioLabels.length > 1) {
+    filterParts.push(
+      `${audioLabels.join('')}amix=inputs=${audioLabels.length}:duration=first:dropout_transition=0[aout]`
+    );
+  } else if (audioLabels.length === 1) {
+    // Single audio - rename to [aout]
+    const lastAudioFilter = filterParts[filterParts.length - 1];
+    filterParts[filterParts.length - 1] = lastAudioFilter.replace(
+      /\[a0\]$/,
+      '[aout]'
+    );
+  } else {
+    // No audio clips - generate silence
+    filterParts.push(buildSilentAudio(timelineDuration, targetSampleRate));
   }
 
-  // Concat audio clips
-  if (audioOutputs.length > 1) {
-    filterComplex += `${audioOutputs.join('')}concat=n=${audioOutputs.length}:v=0:a=1[aout]`;
-  } else if (audioOutputs.length === 1) {
-    // Single clip - just rename output
-    filterComplex = filterComplex.replace(/\[a0\];\n$/, '[aout]');
-  }
-
-  // Remove trailing semicolons/newlines
-  filterComplex = filterComplex.trim().replace(/;$/, '');
+  const filterComplex = filterParts.join(';\n');
 
   // Determine output maps
-  const maps: string[] = [];
-  if (videoOutputs.length > 0) {
-    maps.push('[vout]');
-  }
-  if (audioOutputs.length > 0) {
-    maps.push('[aout]');
-  }
-
-  // Handle edge case: no clips
-  if (inputs.length === 0) {
-    return {
-      inputs: [],
-      filterComplex: '',
-      maps: [],
-      success: false,
-      errors: ['No clips in timeline to export'],
-    };
-  }
-
-  // Handle edge case: only audio or only video
-  if (videoOutputs.length === 0 && audioOutputs.length > 0) {
-    // Audio only - map directly
-    if (audioOutputs.length === 1) {
-      filterComplex = filterComplex.replace('[aout]', '[aout]');
-    }
-  }
-
-  if (audioOutputs.length === 0 && videoOutputs.length > 0) {
-    // Video only
-  }
+  const maps: string[] = ['[vout]', '[aout]'];
 
   return {
     inputs,

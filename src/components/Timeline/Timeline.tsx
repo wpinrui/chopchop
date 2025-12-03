@@ -8,11 +8,11 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { Magnet, ZoomIn, ZoomOut, Link } from 'lucide-react';
 import type { RootState, AppDispatch } from '../../store';
-import { setPlayheadPosition, addClip, updateClip, removeClip, unlinkClips, linkClips } from '../../store/timelineSlice';
+import { setPlayheadPosition, addClip, updateClip, removeClip, unlinkClips, linkClips, addTrack, removeTrack, updateTrack } from '../../store/timelineSlice';
 import { selectClip, addToSelection, removeFromSelection, clearSelection } from '../../store/uiSlice';
 import { initializeSequenceFromMedia } from '../../store/projectSlice';
 import { recordHistoryState } from '../../store/historySlice';
-import type { Clip } from '@types';
+import type { Clip, Track } from '@types';
 import WaveformCanvas from './WaveformCanvas';
 import './Timeline.css';
 
@@ -28,11 +28,21 @@ const Timeline: React.FC = () => {
 
   const timelineRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const tracksContainerRef = useRef<HTMLDivElement>(null);
   const justFinishedDraggingRef = useRef(false);
 
   const [zoom, setZoom] = useState(0.01); // Zoom multiplier (exponential scale), default 1%
   const [viewportWidth, setViewportWidth] = useState(0);
-  const [draggingClip, setDraggingClip] = useState<{ id: string; initialStart: number; mouseOffset: number } | null>(null);
+  // Enhanced drag state for cross-track clip movement
+  const [draggingClip, setDraggingClip] = useState<{
+    id: string;
+    initialStart: number;
+    mouseOffsetX: number;
+    mouseOffsetY: number;
+    sourceTrackId: string;
+    targetTrackId: string | null;  // null = invalid target or same track
+    clipType: 'video' | 'audio' | 'title' | 'solid' | 'adjustment';
+  } | null>(null);
   const [snapEnabled, setSnapEnabled] = useState(true);
 
   // Drag preview state for showing ghost clips during drag from source
@@ -49,6 +59,17 @@ const Timeline: React.FC = () => {
     y: number;
     gapStart: number;
   } | null>(null);
+
+  // Track context menu state
+  const [trackContextMenu, setTrackContextMenu] = useState<{
+    x: number;
+    y: number;
+    trackId: string;
+  } | null>(null);
+
+  // Track renaming state
+  const [editingTrackId, setEditingTrackId] = useState<string | null>(null);
+  const [editingTrackName, setEditingTrackName] = useState('');
 
   // Snap threshold in pixels
   const SNAP_THRESHOLD_PX = 10;
@@ -560,6 +581,23 @@ const Timeline: React.FC = () => {
     setDragPreview(null);
   }, []);
 
+  // Get the track at a given Y position relative to the tracks container
+  const getTrackAtY = useCallback((mouseY: number): Track | null => {
+    if (!tracksContainerRef.current) return null;
+
+    const containerRect = tracksContainerRef.current.getBoundingClientRect();
+    const relativeY = mouseY - containerRect.top;
+
+    // Track height is 60px (from CSS)
+    const trackHeight = 60;
+    const trackIndex = Math.floor(relativeY / trackHeight);
+
+    if (trackIndex >= 0 && trackIndex < tracks.length) {
+      return tracks[trackIndex];
+    }
+    return null;
+  }, [tracks]);
+
   // Get all clips linked to a given clip (including the clip itself)
   const getLinkedClips = useCallback((clipId: string): Clip[] => {
     // Find the clip first
@@ -633,7 +671,14 @@ const Timeline: React.FC = () => {
     const rect = timelineRef.current.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
     const clipStartPixels = timeToPixels(clip.timelineStart);
-    const mouseOffset = mouseX - clipStartPixels;
+    const mouseOffsetX = mouseX - clipStartPixels;
+
+    // Get the source track for cross-track movement
+    const sourceTrack = tracks.find(t => t.clips.some(c => c.id === clip.id));
+    if (!sourceTrack) return;
+
+    // Calculate Y offset within the clip for cross-track dragging
+    const mouseOffsetY = e.clientY;
 
     // Get all linked clips for this clip
     const linkedClips = getLinkedClips(clip.id);
@@ -686,11 +731,11 @@ const Timeline: React.FC = () => {
     }
 
     // Get initial positions for all clips to be moved
-    const initialPositions: { id: string; trackId: string; start: number; duration: number }[] = [];
+    const initialPositions: { id: string; trackId: string; start: number; duration: number; type: string }[] = [];
     for (const track of tracks) {
       for (const c of track.clips) {
         if (allClipIds.has(c.id)) {
-          initialPositions.push({ id: c.id, trackId: track.id, start: c.timelineStart, duration: c.duration });
+          initialPositions.push({ id: c.id, trackId: track.id, start: c.timelineStart, duration: c.duration, type: c.type });
         }
       }
     }
@@ -699,18 +744,28 @@ const Timeline: React.FC = () => {
     const movedClipIds = Array.from(allClipIds);
     // Track the final applied delta (updated during drag)
     let finalDelta = 0;
+    // Track the target track for cross-track movement
+    let currentTargetTrackId: string | null = null;
 
     // Record history state BEFORE starting the drag
     dispatch(recordHistoryState('Move Clip'));
 
-    setDraggingClip({ id: clip.id, initialStart: clip.timelineStart, mouseOffset });
+    setDraggingClip({
+      id: clip.id,
+      initialStart: clip.timelineStart,
+      mouseOffsetX,
+      mouseOffsetY,
+      sourceTrackId: sourceTrack.id,
+      targetTrackId: null,
+      clipType: clip.type as 'video' | 'audio' | 'title' | 'solid' | 'adjustment',
+    });
 
     const onMouseMove = (moveEvent: MouseEvent) => {
       if (!timelineRef.current) return;
 
       const rect = timelineRef.current.getBoundingClientRect();
       const mouseX = moveEvent.clientX - rect.left;
-      const newStartPixels = mouseX - mouseOffset;
+      const newStartPixels = mouseX - mouseOffsetX;
       let newStartTime = Math.max(0, pixelsToTime(newStartPixels));
 
       // Apply snapping
@@ -719,7 +774,23 @@ const Timeline: React.FC = () => {
       // Calculate the delta from original position
       finalDelta = newStartTime - clip.timelineStart;
 
-      // Move all selected/linked clips by the same delta
+      // Detect target track for cross-track movement
+      const targetTrack = getTrackAtY(moveEvent.clientY);
+      const isValidTarget = targetTrack &&
+        targetTrack.id !== sourceTrack.id &&
+        // Video clips can only go to video tracks, audio to audio
+        ((clip.type === 'video' && targetTrack.type === 'video') ||
+         (clip.type === 'audio' && targetTrack.type === 'audio'));
+
+      currentTargetTrackId = isValidTarget ? targetTrack.id : null;
+
+      // Update drag state with target track info
+      setDraggingClip(prev => prev ? {
+        ...prev,
+        targetTrackId: currentTargetTrackId,
+      } : null);
+
+      // Move all selected/linked clips by the same delta (horizontal only during drag)
       for (const pos of initialPositions) {
         const newStart = Math.max(0, pos.start + finalDelta);
         dispatch(updateClip({ id: pos.id, updates: { timelineStart: newStart } }));
@@ -728,24 +799,49 @@ const Timeline: React.FC = () => {
 
     const onMouseUp = () => {
       justFinishedDraggingRef.current = true;
-      setDraggingClip(null);
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
 
-      // Handle overlaps for each moved clip on its track
-      // Only process if there was actual movement
-      if (finalDelta !== 0) {
+      // Handle cross-track movement if we have a valid target track
+      if (currentTargetTrackId && currentTargetTrackId !== sourceTrack.id) {
+        // Move clips of the same type as the primary clip to the new track
+        // Linked clips of different types stay on their original tracks
+        for (const pos of initialPositions) {
+          const newStart = Math.max(0, pos.start + finalDelta);
+          const newEnd = newStart + pos.duration;
+
+          // Only move clips of the same type to the new track
+          if (pos.type === clip.type) {
+            // Update trackId to move to new track
+            dispatch(updateClip({
+              id: pos.id,
+              updates: {
+                trackId: currentTargetTrackId,
+                timelineStart: newStart,
+              }
+            }));
+            // Handle overlaps on the new track
+            handleOverlapsOnDrop(currentTargetTrackId, newStart, newEnd, movedClipIds);
+          } else {
+            // Different type - just update position on original track
+            handleOverlapsOnDrop(pos.trackId, newStart, newEnd, movedClipIds);
+          }
+        }
+      } else if (finalDelta !== 0) {
+        // No cross-track movement, just handle horizontal movement overlaps
         for (const pos of initialPositions) {
           const newStart = Math.max(0, pos.start + finalDelta);
           const newEnd = newStart + pos.duration;
           handleOverlapsOnDrop(pos.trackId, newStart, newEnd, movedClipIds);
         }
       }
+
+      setDraggingClip(null);
     };
 
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
-  }, [dispatch, timeToPixels, pixelsToTime, findSnapPoint, getLinkedClips, selectedClipIds, tracks, handleOverlapsOnDrop]);
+  }, [dispatch, timeToPixels, pixelsToTime, findSnapPoint, getLinkedClips, getTrackAtY, selectedClipIds, tracks, handleOverlapsOnDrop]);
 
   // Format time as MM:SS:FF (or just frames for sub-second markers)
   const formatTime = (seconds: number, forRuler = false): string => {
@@ -905,6 +1001,107 @@ const Timeline: React.FC = () => {
     }
   }, [dispatch, selectedClipIds, selectionLinkStatus.areLinked]);
 
+  // Handle adding a new track
+  const handleAddTrack = useCallback((type: 'video' | 'audio') => {
+    // Count existing tracks of this type to generate name
+    const existingCount = tracks.filter(t => t.type === type).length;
+    const name = type === 'video' ? `Video ${existingCount + 1}` : `Audio ${existingCount + 1}`;
+
+    const newTrack: Track = {
+      id: `${type}-${Date.now()}-${Math.random()}`,
+      type,
+      name,
+      clips: [],
+      muted: false,
+      locked: false,
+      visible: true,
+      volume: 1,
+    };
+
+    dispatch(recordHistoryState('Add Track'));
+    dispatch(addTrack(newTrack));
+    setTrackContextMenu(null);
+  }, [dispatch, tracks]);
+
+  // Handle track header right-click for context menu
+  const handleTrackHeaderContextMenu = useCallback((e: React.MouseEvent, trackId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setTrackContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      trackId,
+    });
+  }, []);
+
+  // Handle deleting a track
+  const handleDeleteTrack = useCallback((trackId: string) => {
+    const track = tracks.find(t => t.id === trackId);
+    if (!track) return;
+
+    // If track has clips, confirm deletion
+    if (track.clips.length > 0) {
+      const confirmed = window.confirm(
+        `This track contains ${track.clips.length} clip(s). Delete track and all clips?`
+      );
+      if (!confirmed) {
+        setTrackContextMenu(null);
+        return;
+      }
+    }
+
+    dispatch(recordHistoryState('Delete Track'));
+    dispatch(removeTrack(trackId));
+    setTrackContextMenu(null);
+  }, [dispatch, tracks]);
+
+  // Handle starting track rename
+  const handleStartRename = useCallback((trackId: string) => {
+    const track = tracks.find(t => t.id === trackId);
+    if (track) {
+      setEditingTrackId(trackId);
+      setEditingTrackName(track.name);
+    }
+    setTrackContextMenu(null);
+  }, [tracks]);
+
+  // Handle saving track rename
+  const handleSaveRename = useCallback(() => {
+    if (editingTrackId && editingTrackName.trim()) {
+      dispatch(updateTrack({ id: editingTrackId, updates: { name: editingTrackName.trim() } }));
+    }
+    setEditingTrackId(null);
+    setEditingTrackName('');
+  }, [dispatch, editingTrackId, editingTrackName]);
+
+  // Handle canceling track rename
+  const handleCancelRename = useCallback(() => {
+    setEditingTrackId(null);
+    setEditingTrackName('');
+  }, []);
+
+  // Close track context menu when clicking elsewhere
+  useEffect(() => {
+    const handleClick = () => {
+      setTrackContextMenu(null);
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setTrackContextMenu(null);
+        handleCancelRename();
+      }
+    };
+
+    if (trackContextMenu) {
+      window.addEventListener('click', handleClick);
+      window.addEventListener('keydown', handleKeyDown);
+      return () => {
+        window.removeEventListener('click', handleClick);
+        window.removeEventListener('keydown', handleKeyDown);
+      };
+    }
+  }, [trackContextMenu, handleCancelRename]);
+
   return (
     <div className="timeline">
       {/* Timeline toolbar */}
@@ -943,12 +1140,53 @@ const Timeline: React.FC = () => {
       {/* Timeline ruler and tracks */}
       <div className="timeline-content">
         {/* Track headers (left side) */}
-        <div className="timeline-track-headers">
+        <div
+          className="timeline-track-headers"
+          onContextMenu={(e) => {
+            // Only handle if clicking on empty space (not on a track header)
+            if ((e.target as HTMLElement).classList.contains('timeline-track-headers')) {
+              e.preventDefault();
+              e.stopPropagation();
+              setTrackContextMenu({
+                x: e.clientX,
+                y: e.clientY,
+                trackId: '', // Empty = no specific track, just adding
+              });
+            }
+          }}
+        >
           {/* Spacer to align with timeline ruler */}
           <div className="track-headers-spacer" />
-          {tracks.map(track => (
-            <div key={track.id} className="track-header">
-              <span className="track-name">{track.name}</span>
+          {tracks.map((track) => (
+            <div
+              key={track.id}
+              className="track-header"
+              onContextMenu={(e) => handleTrackHeaderContextMenu(e, track.id)}
+            >
+              {/* Track name - editable on double-click */}
+              {editingTrackId === track.id ? (
+                <input
+                  type="text"
+                  className="track-name-input"
+                  value={editingTrackName}
+                  onChange={(e) => setEditingTrackName(e.target.value)}
+                  onBlur={handleSaveRename}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSaveRename();
+                    if (e.key === 'Escape') handleCancelRename();
+                  }}
+                  autoFocus
+                  onClick={(e) => e.stopPropagation()}
+                />
+              ) : (
+                <span
+                  className="track-name"
+                  onDoubleClick={() => handleStartRename(track.id)}
+                >
+                  {track.name}
+                </span>
+              )}
+
               <div className="track-controls">
                 <button className="track-toggle" title="Mute">M</button>
                 <button className="track-toggle" title="Solo">S</button>
@@ -991,6 +1229,7 @@ const Timeline: React.FC = () => {
           {/* Tracks */}
           <div
             className="timeline-tracks"
+            ref={tracksContainerRef}
             onDragLeave={handleTrackDragLeave}
             onDragEnd={handleTimelineDragEnd}
           >
@@ -1004,10 +1243,20 @@ const Timeline: React.FC = () => {
               const ghostWidth = dragPreview ? timeToPixels(dragPreview.duration) : 0;
               const ghostMedia = dragPreview ? media.find(m => m.id === dragPreview.mediaId) : null;
 
+              // Determine drop target state for cross-track clip movement
+              const isValidDropTarget = draggingClip &&
+                draggingClip.sourceTrackId !== track.id &&
+                ((draggingClip.clipType === 'video' && track.type === 'video') ||
+                 (draggingClip.clipType === 'audio' && track.type === 'audio'));
+              const isCurrentDropTarget = draggingClip?.targetTrackId === track.id;
+              const isInvalidDropTarget = draggingClip &&
+                draggingClip.sourceTrackId !== track.id &&
+                !isValidDropTarget;
+
               return (
               <div
                 key={track.id}
-                className="track"
+                className={`track ${isCurrentDropTarget ? 'drop-target' : ''} ${isInvalidDropTarget ? 'drop-invalid' : ''}`}
                 onDragOver={handleTrackDragOver}
                 onDrop={(e) => handleTrackDrop(e, track.id)}
                 onContextMenu={(e) => handleTrackContextMenu(e, track.id)}
@@ -1125,6 +1374,48 @@ const Timeline: React.FC = () => {
           >
             Ripple Delete
           </button>
+        </div>
+      )}
+
+      {/* Track Context Menu */}
+      {trackContextMenu && (
+        <div
+          className="timeline-context-menu"
+          style={{
+            position: 'fixed',
+            left: trackContextMenu.x,
+            top: trackContextMenu.y,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            className="context-menu-item"
+            onClick={() => handleAddTrack('video')}
+          >
+            Add Video Track
+          </button>
+          <button
+            className="context-menu-item"
+            onClick={() => handleAddTrack('audio')}
+          >
+            Add Audio Track
+          </button>
+          {trackContextMenu.trackId && (
+            <>
+              <button
+                className="context-menu-item"
+                onClick={() => handleStartRename(trackContextMenu.trackId)}
+              >
+                Rename Track
+              </button>
+              <button
+                className="context-menu-item context-menu-item-danger"
+                onClick={() => handleDeleteTrack(trackContextMenu.trackId)}
+              >
+                Delete Track
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>

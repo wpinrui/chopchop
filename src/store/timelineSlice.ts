@@ -37,7 +37,14 @@ const timelineSlice = createSlice({
 
     // Tracks
     addTrack: (state, action: PayloadAction<Track>) => {
-      state.tracks.push(action.payload);
+      const newTrack = action.payload;
+      if (newTrack.type === 'video') {
+        // New video tracks go at the top (index 0)
+        state.tracks.unshift(newTrack);
+      } else {
+        // Audio tracks go at the end
+        state.tracks.push(newTrack);
+      }
     },
 
     removeTrack: (state, action: PayloadAction<string>) => {
@@ -115,6 +122,15 @@ const timelineSlice = createSlice({
       }
     },
 
+    // Reorder track position
+    reorderTrack: (state, action: PayloadAction<{ trackId: string; newIndex: number }>) => {
+      const { trackId, newIndex } = action.payload;
+      const currentIndex = state.tracks.findIndex(t => t.id === trackId);
+      if (currentIndex === -1) return;
+      const [track] = state.tracks.splice(currentIndex, 1);
+      state.tracks.splice(newIndex, 0, track);
+    },
+
     // Markers
     addMarker: (state, action: PayloadAction<Marker>) => {
       state.markers.push(action.payload);
@@ -151,6 +167,7 @@ export const {
   addTrack,
   removeTrack,
   updateTrack,
+  reorderTrack,
   addClip,
   removeClip,
   removeClipsByMediaId,
