@@ -8,7 +8,7 @@ import type { RootState } from './store';
 import MediaBin, { type MediaBinHandle } from './components/MediaBin/MediaBin';
 import Timeline from './components/Timeline/Timeline';
 import SourcePreview from './components/SourcePreview/SourcePreview';
-import ProgramMonitor from './components/ProgramMonitor/ProgramMonitor';
+import SimpleProgramMonitor from './components/ProgramMonitor/SimpleProgramMonitor';
 import SequenceSettings from './components/SequenceSettings/SequenceSettings';
 import ExportDialog from './components/ExportDialog/ExportDialog';
 import ProxyProgressIndicator from './components/ProxyProgressIndicator/ProxyProgressIndicator';
@@ -636,7 +636,7 @@ const App: React.FC = () => {
           >
             <div className="panel-header">Program Monitor</div>
             <div className="panel-content viewer-content">
-              <ProgramMonitor />
+              <SimpleProgramMonitor />
             </div>
           </div>
         </div>

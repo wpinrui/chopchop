@@ -224,6 +224,57 @@ interface ElectronAPI {
     }) => void) => () => void;
   };
 
+  // ========================================================================
+  // SIMPLE PREVIEW SYSTEM (Simplified chunk-based preview)
+  // ========================================================================
+  simplePreview: {
+    // Initialize the simple preview engine
+    initialize: () => Promise<{ success: boolean }>;
+
+    // Render all chunks and concat into full preview
+    renderFullPreview: () => Promise<{ success: boolean; previewPath?: string | null; error?: string }>;
+
+    // Get current preview state
+    getState: () => Promise<{
+      isInitialized: boolean;
+      isRendering: boolean;
+      progress: number;
+      fullPreviewPath: string | null;
+      fullPreviewReady: boolean;
+      chunks: Array<{
+        index: number;
+        startTime: number;
+        endTime: number;
+        status: string;
+        filePath: string | null;
+      }>;
+      error: string | null;
+    }>;
+
+    // Get full preview path if ready
+    getFullPreviewPath: () => Promise<string | null>;
+
+    // Clear all cache
+    clearCache: () => Promise<{ success: boolean; error?: string }>;
+
+    // Listen for state updates
+    onStateUpdate: (callback: (state: {
+      isInitialized: boolean;
+      isRendering: boolean;
+      progress: number;
+      fullPreviewPath: string | null;
+      fullPreviewReady: boolean;
+    }) => void) => () => void;
+
+    // Listen for progress updates
+    onProgress: (callback: (data: {
+      progress: number;
+      chunksReady: number;
+      totalChunks: number;
+      isRendering: boolean;
+    }) => void) => () => void;
+  };
+
   settings: {
     setRecentProject: (projectPath: string | null) => Promise<void>;
     getRecentProject: () => Promise<string | null>;

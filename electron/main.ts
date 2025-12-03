@@ -10,7 +10,7 @@ import { probeMediaFile, getMediaDuration, generateThumbnail, getMediaType, gene
 import { checkFFmpegAvailable, getFFmpegVersion, checkNvencAvailable, generateProxy, cancelProxyGeneration } from './ffmpeg/runner';
 import { exportTimeline, cancelExport, type ExportProgress } from './ffmpeg/exporter';
 import { renderChunk, cancelChunkRender, cancelAllChunkRenders, getChunkOutputDir, clearChunkCache, renderFullPreview, cancelPreviewRender, runPreviewPipeline, cancelPipeline, type PipelineProgress } from './ffmpeg/chunkRenderer';
-import { getPreviewEngine, disposePreviewEngine } from './preview';
+import { getSimplePreviewEngine, disposeSimplePreviewEngine } from './preview/SimplePreviewEngine';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import os from 'node:os';
@@ -679,10 +679,10 @@ function registerIPCHandlers() {
   });
 
   // ==========================================================================
-  // HYBRID PREVIEW SYSTEM (New)
+  // SIMPLE PREVIEW SYSTEM
   // ==========================================================================
 
-  // Initialize the hybrid preview engine
+  // Initialize preview system with timeline data
   ipcMain.handle('preview:init', async (
     _event,
     options: {
@@ -705,8 +705,8 @@ function registerIPCHandlers() {
         return m;
       });
 
-      const engine = getPreviewEngine();
-      const chunks = await engine.initialize(
+      const engine = getSimplePreviewEngine();
+      const state = await engine.initialize(
         options.timeline,
         sanitizedMedia,
         options.settings,
@@ -717,7 +717,7 @@ function registerIPCHandlers() {
 
       return {
         success: true,
-        chunks: chunks.map(c => ({
+        chunks: state.chunks.map(c => ({
           index: c.index,
           startTime: c.startTime,
           endTime: c.endTime,
@@ -734,7 +734,7 @@ function registerIPCHandlers() {
     }
   });
 
-  // Update timeline (after edits)
+  // Update timeline (after edits) - invalidates affected chunks
   ipcMain.handle('preview:updateTimeline', async (
     _event,
     options: {
@@ -745,7 +745,6 @@ function registerIPCHandlers() {
     }
   ) => {
     try {
-      // Sanitize media: clear proxy paths that don't exist
       const sanitizedMedia = options.media.map(m => {
         if (m.proxyPath && !fsSync.existsSync(m.proxyPath)) {
           return { ...m, proxyPath: null };
@@ -753,8 +752,8 @@ function registerIPCHandlers() {
         return m;
       });
 
-      const engine = getPreviewEngine();
-      await engine.updateTimeline(
+      const engine = getSimplePreviewEngine();
+      await engine.onTimelineEdit(
         options.timeline,
         sanitizedMedia,
         options.settings,
@@ -769,142 +768,11 @@ function registerIPCHandlers() {
     }
   });
 
-  // Extract a single frame (for scrub/pause)
-  ipcMain.handle('preview:extractFrame', async (_event, time: number) => {
-    try {
-      const engine = getPreviewEngine();
-      const frame = await engine.extractFrame(time);
-
-      if (frame) {
-        return {
-          success: true,
-          time: frame.time,
-          width: frame.width,
-          height: frame.height,
-          data: frame.data.buffer.slice(
-            frame.data.byteOffset,
-            frame.data.byteOffset + frame.data.byteLength
-          ),
-        };
-      }
-
-      return { success: false, error: 'No frame extracted' };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      };
-    }
-  });
-
-  // Start scrub mode
-  ipcMain.handle('preview:scrubStart', async (_event, time: number) => {
-    const engine = getPreviewEngine();
-    engine.startScrub(time);
-    return { success: true };
-  });
-
-  // Update scrub position
-  ipcMain.handle('preview:scrubUpdate', async (
-    _event,
-    options: { time: number; velocity: number }
-  ) => {
-    try {
-      const engine = getPreviewEngine();
-      const frame = await engine.updateScrub(options.time, options.velocity);
-
-      if (frame) {
-        return {
-          success: true,
-          time: frame.time,
-          width: frame.width,
-          height: frame.height,
-          data: frame.data.buffer.slice(
-            frame.data.byteOffset,
-            frame.data.byteOffset + frame.data.byteLength
-          ),
-        };
-      }
-
-      return { success: true };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      };
-    }
-  });
-
-  // End scrub mode
-  ipcMain.handle('preview:scrubEnd', async () => {
-    const engine = getPreviewEngine();
-    engine.endScrub();
-    return { success: true };
-  });
-
-  // Step one frame
-  ipcMain.handle('preview:frameStep', async (_event, { direction, frameRate }: { direction: -1 | 1; frameRate: number }) => {
-    try {
-      const engine = getPreviewEngine();
-      const frame = await engine.frameStep(direction, frameRate);
-
-      if (frame) {
-        return {
-          success: true,
-          time: frame.time,
-          width: frame.width,
-          height: frame.height,
-          data: frame.data.buffer.slice(
-            frame.data.byteOffset,
-            frame.data.byteOffset + frame.data.byteLength
-          ),
-        };
-      }
-
-      return { success: false, error: 'No frame extracted' };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      };
-    }
-  });
-
-  // Get playback info for a time (realtime vs chunk)
-  ipcMain.handle('preview:getPlaybackInfo', async (_event, time: number) => {
-    const engine = getPreviewEngine();
-    return engine.getPlaybackInfo(time);
-  });
-
-  // Get clip info for realtime playback
-  ipcMain.handle('preview:getClipAtTime', async (_event, time: number) => {
-    const engine = getPreviewEngine();
-    return engine.getClipAtTime(time);
-  });
-
-  // Prioritize chunks near playhead
-  ipcMain.handle('preview:prioritizeChunks', async (_event, time: number) => {
-    const engine = getPreviewEngine();
-    engine.prioritizeChunksNear(time);
-    return { success: true };
-  });
-
-  // Invalidate chunks in a range
-  ipcMain.handle('preview:invalidateRange', async (
-    _event,
-    options: { startTime: number; endTime: number }
-  ) => {
-    const engine = getPreviewEngine();
-    engine.invalidateRange(options.startTime, options.endTime);
-    return { success: true };
-  });
-
-  // Clear all preview cache (new hybrid system)
+  // Clear all preview cache
   ipcMain.handle('preview:clearAllCache', async () => {
     try {
-      const engine = getPreviewEngine();
+      const engine = getSimplePreviewEngine();
       await engine.clearCache();
-      // Also clear old chunk cache for backwards compatibility
       await clearChunkCache();
       return { success: true };
     } catch (error) {
@@ -915,37 +783,64 @@ function registerIPCHandlers() {
     }
   });
 
-  // Get cache statistics
-  ipcMain.handle('preview:getCacheStats', async () => {
-    const engine = getPreviewEngine();
-    return engine.getCacheStats();
+  // Simple preview: Initialize
+  ipcMain.handle('simplePreview:init', async () => {
+    return { success: true };
   });
 
-  // Prefetch frames for smoother playback
-  ipcMain.handle('preview:prefetchFrames', async (
-    _event,
-    { time, count, direction }: { time: number; count?: number; direction?: -1 | 1 }
-  ) => {
-    const engine = getPreviewEngine();
-    engine.prefetchFrames(time, count ?? 5, direction ?? 1);
+  // Simple preview: Render full preview
+  ipcMain.handle('simplePreview:renderFullPreview', async () => {
+    if (!mainWindow) return { success: false, error: 'No main window' };
+
+    try {
+      const engine = getSimplePreviewEngine();
+
+      // Check if we have a full preview ready
+      const existingPath = engine.getFullPreviewPath();
+      if (existingPath) {
+        return { success: true, previewPath: existingPath };
+      }
+
+      // Start rendering (async - will send progress updates)
+      const previewPath = await engine.renderFullPreview();
+      return { success: true, previewPath };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
   });
 
-  // Get current chunks status
-  ipcMain.handle('preview:getChunks', async () => {
-    const engine = getPreviewEngine();
-    return engine.getChunks().map(c => ({
-      index: c.index,
-      startTime: c.startTime,
-      endTime: c.endTime,
-      status: c.status,
-      filePath: c.filePath,
-      isComplex: c.isComplex,
-    }));
+  // Simple preview: Get current state
+  ipcMain.handle('simplePreview:getState', async () => {
+    const engine = getSimplePreviewEngine();
+    return engine.getState();
+  });
+
+  // Simple preview: Get full preview path
+  ipcMain.handle('simplePreview:getFullPreviewPath', async () => {
+    const engine = getSimplePreviewEngine();
+    return engine.getFullPreviewPath();
+  });
+
+  // Simple preview: Clear cache
+  ipcMain.handle('simplePreview:clearCache', async () => {
+    try {
+      const engine = getSimplePreviewEngine();
+      await engine.clearCache();
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
   });
 }
 
 // Graceful shutdown
 app.on('before-quit', () => {
   // Clean up preview engine and ffmpeg processes
-  disposePreviewEngine();
+  disposeSimplePreviewEngine();
 });

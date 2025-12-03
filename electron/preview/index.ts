@@ -1,17 +1,13 @@
 /**
  * Preview System
  *
- * Hybrid preview system with:
- * - Real-time decode for simple clips
- * - Pre-rendered chunks for complex segments
- * - Frame extraction for scrub/pause
- * - Pitch-shifted audio during scrubbing
+ * Simple chunk-based preview system:
+ * - Renders timeline into 2-second chunks
+ * - Concatenates chunks into single preview file
+ * - Cache invalidation on timeline edits only
  */
 
 export * from './types';
-export * from './PreviewEngine';
 export * from './ChunkCache';
 export * from './ChunkRenderer';
-export * from './FrameExtractor';
-export * from './ScrubAudioController';
-export * from './complexityDetector';
+export * from './SimplePreviewEngine';

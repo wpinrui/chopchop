@@ -210,6 +210,51 @@ const electronAPI = {
     },
   },
 
+  // ========================================================================
+  // SIMPLE PREVIEW SYSTEM (Simplified chunk-based preview)
+  // ========================================================================
+  simplePreview: {
+    // Initialize the simple preview engine
+    initialize: () => ipcRenderer.invoke('simplePreview:init'),
+
+    // Render all chunks and concat into full preview
+    renderFullPreview: () => ipcRenderer.invoke('simplePreview:renderFullPreview'),
+
+    // Get current preview state
+    getState: () => ipcRenderer.invoke('simplePreview:getState'),
+
+    // Get full preview path if ready
+    getFullPreviewPath: () => ipcRenderer.invoke('simplePreview:getFullPreviewPath'),
+
+    // Clear all cache
+    clearCache: () => ipcRenderer.invoke('simplePreview:clearCache'),
+
+    // Listen for state updates
+    onStateUpdate: (callback: (state: {
+      isInitialized: boolean;
+      isRendering: boolean;
+      progress: number;
+      fullPreviewPath: string | null;
+      fullPreviewReady: boolean;
+    }) => void) => {
+      const handler = (_event: any, state: any) => callback(state);
+      ipcRenderer.on('simplePreview:stateUpdate', handler);
+      return () => ipcRenderer.removeListener('simplePreview:stateUpdate', handler);
+    },
+
+    // Listen for progress updates
+    onProgress: (callback: (data: {
+      progress: number;
+      chunksReady: number;
+      totalChunks: number;
+      isRendering: boolean;
+    }) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('simplePreview:progress', handler);
+      return () => ipcRenderer.removeListener('simplePreview:progress', handler);
+    },
+  },
+
   // App settings
   settings: {
     setRecentProject: (projectPath: string | null) =>
