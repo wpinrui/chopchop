@@ -31,16 +31,27 @@ export function analyzeSegmentComplexity(
     (t) => t.type === 'video' && t.visible !== false
   );
 
-  // Count overlapping clips at any point in the segment
-  const clipsInRange = getClipsInTimeRange(videoTracks, startTime, endTime);
+  // Get all audio tracks
+  const audioTracks = timeline.tracks.filter(
+    (t) => t.type === 'audio' && !t.muted
+  );
 
-  // Check for multiple overlapping clips
-  if (hasOverlappingClips(clipsInRange, startTime, endTime)) {
+  // Count overlapping video clips at any point in the segment
+  const videoClipsInRange = getClipsInTimeRange(videoTracks, startTime, endTime);
+
+  // Check for multiple overlapping video clips
+  if (hasOverlappingClips(videoClipsInRange, startTime, endTime)) {
+    reasons.push('multiple_clips');
+  }
+
+  // Count overlapping audio clips - multiple audio clips = complex (need mixing)
+  const audioClipsInRange = getClipsInTimeRange(audioTracks, startTime, endTime);
+  if (hasOverlappingClips(audioClipsInRange, startTime, endTime)) {
     reasons.push('multiple_clips');
   }
 
   // Check for effects on any clip
-  for (const clip of clipsInRange) {
+  for (const clip of videoClipsInRange) {
     if (clipHasEffects(clip)) {
       reasons.push('has_effects');
       break;
@@ -48,7 +59,7 @@ export function analyzeSegmentComplexity(
   }
 
   // Check for speed changes (mediaIn/mediaOut vs duration mismatch)
-  for (const clip of clipsInRange) {
+  for (const clip of videoClipsInRange) {
     if (clipHasSpeedChange(clip)) {
       reasons.push('speed_change');
       break;
@@ -181,10 +192,15 @@ export function isTimePointComplex(
   const videoTracks = timeline.tracks.filter(
     (t) => t.type === 'video' && t.visible !== false
   );
+  const audioTracks = timeline.tracks.filter(
+    (t) => t.type === 'audio' && !t.muted
+  );
 
-  let clipCount = 0;
+  let videoClipCount = 0;
+  let audioClipCount = 0;
   let hasEffects = false;
 
+  // Count video clips at this time
   for (const track of videoTracks) {
     for (const clip of track.clips) {
       if (!clip.enabled) continue;
@@ -193,7 +209,7 @@ export function isTimePointComplex(
       const clipEnd = clip.timelineStart + clip.duration;
 
       if (time >= clipStart && time < clipEnd) {
-        clipCount++;
+        videoClipCount++;
 
         if (clipHasEffects(clip)) {
           hasEffects = true;
@@ -202,9 +218,23 @@ export function isTimePointComplex(
     }
   }
 
+  // Count audio clips at this time - multiple audio = complex (need mixing)
+  for (const track of audioTracks) {
+    for (const clip of track.clips) {
+      if (!clip.enabled) continue;
+
+      const clipStart = clip.timelineStart;
+      const clipEnd = clip.timelineStart + clip.duration;
+
+      if (time >= clipStart && time < clipEnd) {
+        audioClipCount++;
+      }
+    }
+  }
+
   return {
-    isComplex: clipCount > 1 || hasEffects,
-    clipCount,
+    isComplex: videoClipCount > 1 || audioClipCount > 1 || hasEffects,
+    clipCount: videoClipCount,
     hasEffects,
   };
 }

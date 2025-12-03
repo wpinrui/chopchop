@@ -51,6 +51,7 @@ const Timeline: React.FC = () => {
     type: 'video' | 'audio' | 'both';
     duration: number;
     xPosition: number;
+    targetTrackId: string | null;  // Track being hovered over
   } | null>(null);
 
   // Context menu state for gap operations
@@ -625,7 +626,7 @@ const Timeline: React.FC = () => {
   }, [tracks]);
 
   // Handle drag over for source preview drops (with snapping)
-  const handleTrackDragOver = useCallback((e: React.DragEvent) => {
+  const handleTrackDragOver = useCallback((e: React.DragEvent, trackId: string) => {
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect = 'copy';
@@ -657,6 +658,7 @@ const Timeline: React.FC = () => {
         type: dragSource.type,
         duration,
         xPosition,
+        targetTrackId: trackId,  // Track being hovered
       });
     }
   }, [snapEnabled, pixelsToTime, timeToPixels, findSnapPoint]);
@@ -1233,12 +1235,36 @@ const Timeline: React.FC = () => {
             onDragLeave={handleTrackDragLeave}
             onDragEnd={handleTimelineDragEnd}
           >
-            {tracks.map(track => {
+            {tracks.map((track) => {
               // Determine if this track should show a ghost clip
-              const showGhost = dragPreview && (
-                (track.type === 'video' && (dragPreview.type === 'video' || dragPreview.type === 'both')) ||
-                (track.type === 'audio' && (dragPreview.type === 'audio' || dragPreview.type === 'both'))
-              );
+              // For 'video' or 'audio' only: show on hovered track of matching type
+              // For 'both': show video on hovered video track (or first video track if hovering audio),
+              //             audio always on first audio track
+              let showGhost = false;
+              if (dragPreview) {
+                const hoveredTrack = tracks.find(t => t.id === dragPreview.targetTrackId);
+                const firstVideoTrack = tracks.find(t => t.type === 'video');
+                const firstAudioTrack = tracks.find(t => t.type === 'audio');
+
+                if (dragPreview.type === 'both') {
+                  // Video ghost: show on hovered video track, or first video track if hovering audio
+                  if (track.type === 'video') {
+                    if (hoveredTrack?.type === 'video' && dragPreview.targetTrackId === track.id) {
+                      showGhost = true;
+                    } else if (hoveredTrack?.type === 'audio' && firstVideoTrack && track.id === firstVideoTrack.id) {
+                      showGhost = true;
+                    }
+                  }
+                  // Audio ghost: always on first audio track
+                  if (track.type === 'audio' && firstAudioTrack && track.id === firstAudioTrack.id) {
+                    showGhost = true;
+                  }
+                } else if (dragPreview.type === 'video' && track.type === 'video') {
+                  showGhost = dragPreview.targetTrackId === track.id;
+                } else if (dragPreview.type === 'audio' && track.type === 'audio') {
+                  showGhost = dragPreview.targetTrackId === track.id;
+                }
+              }
               const ghostLeft = dragPreview ? dragPreview.xPosition : 0;
               const ghostWidth = dragPreview ? timeToPixels(dragPreview.duration) : 0;
               const ghostMedia = dragPreview ? media.find(m => m.id === dragPreview.mediaId) : null;
@@ -1263,7 +1289,7 @@ const Timeline: React.FC = () => {
               <div
                 key={track.id}
                 className={`track ${isCurrentDropTarget ? 'drop-target' : ''} ${isInvalidDropTarget ? 'drop-invalid' : ''}`}
-                onDragOver={handleTrackDragOver}
+                onDragOver={(e) => handleTrackDragOver(e, track.id)}
                 onDrop={(e) => handleTrackDrop(e, track.id)}
                 onContextMenu={(e) => handleTrackContextMenu(e, track.id)}
               >

@@ -209,8 +209,48 @@ const ProgramMonitor: React.FC = () => {
     const playbackInfo = await previewActions.getPlaybackInfo(startTime);
     const clipInfo = await previewActions.getClipAtTime(startTime);
 
+    // DEBUG: Log playback decision
+    console.log('[ProgramMonitor] handlePlay:', {
+      startTime,
+      playbackInfo,
+      clipInfo,
+      previewReady,
+    });
+
+    // If this is a complex segment with a pre-rendered chunk, use chunk playback
+    if (playbackInfo.isComplex && playbackInfo.mode === 'chunk' && playbackInfo.chunkPath) {
+      console.log('[ProgramMonitor] Using CHUNK playback:', playbackInfo.chunkPath);
+      const video = videoRef.current;
+      if (video) {
+        setSourcePlaybackInfo(null);
+        setIsPlaying(true);
+        setDisplayMode('video');
+        setPlaybackDirection(1);
+        setPlaybackSpeed(speed);
+        dispatch(setPlayingPane('program'));
+
+        // Play from pre-rendered chunk
+        const chunkUrl = `file:///${playbackInfo.chunkPath.replace(/\\/g, '/')}`;
+        if (video.src !== chunkUrl) {
+          video.src = chunkUrl;
+          await new Promise<void>((resolve) => {
+            video.onloadedmetadata = () => resolve();
+            video.onerror = () => resolve();
+          });
+        }
+
+        video.playbackRate = speed;
+        // Seek within the chunk (time relative to chunk start)
+        video.currentTime = startTime - playbackInfo.chunkStartTime;
+        video.muted = isMuted;
+        video.play();
+        return;
+      }
+    }
+
     // If this is a simple segment and we have a clip, play from source
     if (!playbackInfo.isComplex && clipInfo?.hasClip && clipInfo.mediaPath) {
+      console.log('[ProgramMonitor] Using SOURCE playback (simple segment):', clipInfo.mediaPath);
       const sourceVideo = sourceVideoRef.current;
       if (sourceVideo) {
         // Find the clip boundaries for monitoring when to switch
@@ -256,6 +296,7 @@ const ProgramMonitor: React.FC = () => {
 
     // Fall back to pre-rendered preview if available
     if (previewReady) {
+      console.log('[ProgramMonitor] Using LEGACY preview playback');
       const video = videoRef.current;
       if (!video) return;
 
@@ -544,6 +585,37 @@ const ProgramMonitor: React.FC = () => {
     // Check what's at the next position
     const nextInfo = await previewActions.getPlaybackInfo(boundaryTime);
     const nextClip = await previewActions.getClipAtTime(boundaryTime);
+
+    // If entering a complex segment with pre-rendered chunk, switch to chunk playback
+    if (nextInfo.isComplex && nextInfo.mode === 'chunk' && nextInfo.chunkPath) {
+      const sourceVideo = sourceVideoRef.current;
+      if (sourceVideo) {
+        sourceVideo.pause();
+      }
+
+      const video = videoRef.current;
+      if (video) {
+        setSourcePlaybackInfo(null);
+        setDisplayMode('video');
+
+        // Play from pre-rendered chunk
+        const chunkUrl = `file:///${nextInfo.chunkPath.replace(/\\/g, '/')}`;
+        if (video.src !== chunkUrl) {
+          video.src = chunkUrl;
+          await new Promise<void>((resolve) => {
+            video.onloadedmetadata = () => resolve();
+            video.onerror = () => resolve();
+          });
+        }
+
+        video.playbackRate = playbackSpeed;
+        // Seek within the chunk (time relative to chunk start)
+        video.currentTime = boundaryTime - nextInfo.chunkStartTime;
+        video.muted = isMuted;
+        video.play();
+        return;
+      }
+    }
 
     if (!nextInfo.isComplex && nextClip?.hasClip && nextClip.mediaPath) {
       // Another simple clip - switch to it
