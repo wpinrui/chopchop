@@ -584,6 +584,83 @@ const ProgramMonitor: React.FC = () => {
     handlePause();
   }, [previewActions, tracks, handlePause]);
 
+  // Render source video to canvas during source playback
+  // This handles resolution mismatch correctly: pad (black bars) for smaller sources, crop for larger sources
+  // CRITICAL: Source clips are NEVER auto-scaled to fit sequence - see claude.md
+  useEffect(() => {
+    if (!sourcePlaybackInfo?.enabled || !isPlaying) return;
+
+    const sourceVideo = sourceVideoRef.current;
+    const canvas = canvasRef.current;
+    if (!sourceVideo || !canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    let animationId: number;
+
+    const drawFrame = () => {
+      if (!sourcePlaybackInfo?.enabled) return;
+
+      // Get source video dimensions
+      const srcWidth = sourceVideo.videoWidth;
+      const srcHeight = sourceVideo.videoHeight;
+
+      // Canvas (sequence) dimensions
+      const seqWidth = fullWidth;
+      const seqHeight = fullHeight;
+
+      // Clear canvas with background color
+      ctx.fillStyle = backgroundColor;
+      ctx.fillRect(0, 0, seqWidth, seqHeight);
+
+      if (srcWidth > 0 && srcHeight > 0) {
+        // Calculate draw parameters for center positioning WITHOUT scaling
+        // Source clips maintain their native resolution:
+        // - Smaller sources get padded (black bars)
+        // - Larger sources get cropped (center portion shown)
+
+        // Source rectangle (what part of the video to draw)
+        let sx = 0, sy = 0, sw = srcWidth, sh = srcHeight;
+
+        // Destination rectangle (where to draw on canvas)
+        let dx = 0, dy = 0, dw = srcWidth, dh = srcHeight;
+
+        // If source is larger than sequence, crop from center
+        if (srcWidth > seqWidth) {
+          sx = (srcWidth - seqWidth) / 2;
+          sw = seqWidth;
+          dw = seqWidth;
+          dx = 0;
+        } else {
+          // Source is smaller or equal - center it
+          dx = (seqWidth - srcWidth) / 2;
+        }
+
+        if (srcHeight > seqHeight) {
+          sy = (srcHeight - seqHeight) / 2;
+          sh = seqHeight;
+          dh = seqHeight;
+          dy = 0;
+        } else {
+          // Source is smaller or equal - center it
+          dy = (seqHeight - srcHeight) / 2;
+        }
+
+        // Draw the video frame with no scaling, proper crop/pad
+        ctx.drawImage(sourceVideo, sx, sy, sw, sh, dx, dy, dw, dh);
+      }
+
+      animationId = requestAnimationFrame(drawFrame);
+    };
+
+    animationId = requestAnimationFrame(drawFrame);
+
+    return () => {
+      cancelAnimationFrame(animationId);
+    };
+  }, [sourcePlaybackInfo?.enabled, isPlaying, fullWidth, fullHeight, backgroundColor]);
+
   // Handle reverse playback using requestAnimationFrame (HTML5 video doesn't support negative playbackRate)
   // Use refs to avoid effect restarting when callbacks change
   const reverseTimeRef = useRef(playheadPosition);
@@ -864,20 +941,18 @@ const ProgramMonitor: React.FC = () => {
           />
         )}
 
-        {/* Source video element - for direct source file playback (progressive) */}
+        {/* Source video element - hidden, used for real-time decode during progressive playback */}
+        {/* We render to canvas to handle resolution mismatch correctly (pad/crop, no scaling) */}
         <video
           ref={sourceVideoRef}
           className="program-preview-video"
           muted={isMuted}
           style={{
-            width: displaySize.width,
-            height: displaySize.height,
-            backgroundColor,
-            display: displayMode === 'video' && sourcePlaybackInfo?.enabled ? 'block' : 'none',
+            display: 'none', // Always hidden - we draw to canvas instead
           }}
         />
 
-        {/* Canvas - for pause/scrub display (full quality from source) */}
+        {/* Canvas - for pause/scrub display AND source playback (handles resolution correctly) */}
         <canvas
           ref={canvasRef}
           width={fullWidth}
@@ -887,7 +962,7 @@ const ProgramMonitor: React.FC = () => {
             width: displaySize.width,
             height: displaySize.height,
             backgroundColor,
-            display: displayMode === 'canvas' ? 'block' : 'none',
+            display: displayMode === 'canvas' || sourcePlaybackInfo?.enabled ? 'block' : 'none',
           }}
         />
 
