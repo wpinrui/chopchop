@@ -295,7 +295,11 @@ export class ChunkRenderer {
       if (mediaIndexMap.has(mediaItem.id)) {
         return mediaIndexMap.get(mediaItem.id)!;
       }
-      const mediaPath = mediaItem.proxyPath || mediaItem.path;
+      // Check if proxy file exists before using it
+      let mediaPath = mediaItem.path;
+      if (mediaItem.proxyPath && fs.existsSync(mediaItem.proxyPath)) {
+        mediaPath = mediaItem.proxyPath;
+      }
       const idx = inputs.length;
       inputs.push({ path: mediaPath, mediaId: mediaItem.id, index: idx });
       mediaIndexMap.set(mediaItem.id, idx);
@@ -535,9 +539,12 @@ export class ChunkRenderer {
         const clipEnd = clip.timelineStart + clip.duration;
         if (clip.timelineStart < endTime && clipEnd > startTime) {
           const media = this.media.find((m) => m.id === clip.mediaId);
+          // Use proxy path only if the file exists
+          const mediaPath = media?.proxyPath && fs.existsSync(media.proxyPath)
+            ? media.proxyPath
+            : (media?.path || '');
           hashData.push(
-            `${clip.mediaId}|${clip.mediaIn}|${clip.mediaOut}|${clip.timelineStart}|` +
-            `${media?.proxyPath || media?.path || ''}`
+            `${clip.mediaId}|${clip.mediaIn}|${clip.mediaOut}|${clip.timelineStart}|${mediaPath}`
           );
         }
       }

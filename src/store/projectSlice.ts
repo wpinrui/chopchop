@@ -96,6 +96,13 @@ const projectSlice = createSlice({
       }
     },
 
+    // Clear all proxy paths (useful when proxies are deleted/missing)
+    clearAllProxies: (state) => {
+      for (const item of state.media) {
+        item.proxyPath = null;
+      }
+    },
+
     // Load/reset
     loadProject: (_state, action: PayloadAction<Project>) => {
       return { ...action.payload, dirty: false };
@@ -124,6 +131,7 @@ export const {
   removeMediaItem,
   updateMediaItem,
   setMediaProxy,
+  clearAllProxies,
   loadProject,
   setMedia,
   resetProject,

@@ -15,6 +15,7 @@
  */
 
 import { BrowserWindow } from 'electron';
+import fs from 'node:fs';
 import type {
   Timeline,
   MediaItem,
@@ -334,9 +335,12 @@ export class PreviewEngine {
           const mediaItem = this.media.find((m) => m.id === clip.mediaId);
           if (mediaItem) {
             const mediaTime = clip.mediaIn + (time - clipStart);
-            // Use proxy for playback if available
+            // Use proxy for playback if available and exists
+            const mediaPath = mediaItem.proxyPath && fs.existsSync(mediaItem.proxyPath)
+              ? mediaItem.proxyPath
+              : mediaItem.path;
             return {
-              mediaPath: mediaItem.proxyPath || mediaItem.path,
+              mediaPath,
               mediaTime,
               hasClip: true,
             };

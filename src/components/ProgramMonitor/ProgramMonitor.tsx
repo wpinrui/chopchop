@@ -197,6 +197,12 @@ const ProgramMonitor: React.FC = () => {
     const video = videoRef.current;
     if (!video) return;
 
+    // Wrap around to start if playhead is at or beyond timeline duration
+    const startTime = playheadPosition >= timelineDuration ? 0 : playheadPosition;
+    if (startTime !== playheadPosition) {
+      dispatch(setPlayheadPosition(startTime));
+    }
+
     setIsPlaying(true);
     setDisplayMode('video');
     setPlaybackDirection(1);
@@ -204,9 +210,9 @@ const ProgramMonitor: React.FC = () => {
     dispatch(setPlayingPane('program'));
 
     video.playbackRate = speed;
-    video.currentTime = playheadPosition;
+    video.currentTime = startTime;
     video.play();
-  }, [previewReady, playheadPosition, dispatch]);
+  }, [previewReady, playheadPosition, timelineDuration, dispatch]);
 
   // Pause handler
   const handlePause = useCallback(async () => {
@@ -550,6 +556,11 @@ const ProgramMonitor: React.FC = () => {
               setShowLoadingDialog(true);
               return;
             }
+            // Wrap around to start if playhead is at or beyond timeline duration
+            const startTime = playheadPosition >= timelineDuration ? 0 : playheadPosition;
+            if (startTime !== playheadPosition) {
+              dispatch(setPlayheadPosition(startTime));
+            }
             setPlaybackSpeed(PLAYBACK_SPEEDS[0]);
             setPlaybackDirection(1);
             setDisplayMode('video');
@@ -557,7 +568,7 @@ const ProgramMonitor: React.FC = () => {
             dispatch(setPlayingPane('program'));
             if (video) {
               video.playbackRate = PLAYBACK_SPEEDS[0];
-              video.currentTime = playheadPosition;
+              video.currentTime = startTime;
               video.play();
             }
           }
@@ -597,7 +608,7 @@ const ProgramMonitor: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [shouldHandleKeyboard, handlePlayPause, handleFrameStep, handleGoToStart, handleGoToEnd, handlePlay, handlePause, isPlaying, isMuted, playbackDirection, playbackSpeed, playheadPosition, previewReady, dispatch]);
+  }, [shouldHandleKeyboard, handlePlayPause, handleFrameStep, handleGoToStart, handleGoToEnd, handlePlay, handlePause, isPlaying, isMuted, playbackDirection, playbackSpeed, playheadPosition, previewReady, dispatch, timelineDuration]);
 
   // Set active pane when clicked
   const handlePaneClick = useCallback(() => {
@@ -636,8 +647,10 @@ const ProgramMonitor: React.FC = () => {
     }
   }, [showLoadingDialog, previewReady, handlePlay]);
 
-  // Calculate playhead percentage for scrub bar
-  const playheadPercent = timelineDuration > 0 ? (playheadPosition / timelineDuration) * 100 : 0;
+  // Calculate playhead percentage for scrub bar (clamped to prevent overflow)
+  const playheadPercent = timelineDuration > 0
+    ? Math.min(100, Math.max(0, (playheadPosition / timelineDuration) * 100))
+    : 0;
 
   // Preview video source
   const previewSrc = preview.filePath

@@ -12,6 +12,7 @@ import { exportTimeline, cancelExport, type ExportProgress } from './ffmpeg/expo
 import { renderChunk, cancelChunkRender, cancelAllChunkRenders, getChunkOutputDir, clearChunkCache, renderFullPreview, cancelPreviewRender, runPreviewPipeline, cancelPipeline, type PipelineProgress } from './ffmpeg/chunkRenderer';
 import { getPreviewEngine, disposePreviewEngine } from './preview';
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import os from 'node:os';
 
 // App settings file path (lazy-initialized after app is ready)
@@ -215,6 +216,10 @@ function createAppMenu() {
           label: 'Clear Preview Cache',
           accelerator: 'CmdOrCtrl+Shift+Delete',
           click: () => mainWindow?.webContents.send('menu:clearPreviewCache'),
+        },
+        {
+          label: 'Clear Proxy References',
+          click: () => mainWindow?.webContents.send('menu:clearProxyReferences'),
         },
       ],
     },
@@ -462,6 +467,15 @@ function registerIPCHandlers() {
   });
 
   // File operations
+  ipcMain.handle('file:exists', async (_event, filePath: string) => {
+    try {
+      await fs.access(filePath);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
   ipcMain.handle('file:readText', async (_event, filePath: string) => {
     return await fs.readFile(filePath, 'utf-8');
   });
@@ -682,10 +696,19 @@ function registerIPCHandlers() {
     if (!mainWindow) return { success: false, error: 'No main window' };
 
     try {
+      // Sanitize media: clear proxy paths that don't exist
+      const sanitizedMedia = options.media.map(m => {
+        if (m.proxyPath && !fsSync.existsSync(m.proxyPath)) {
+          console.log(`[preview:init] Clearing missing proxy: ${m.proxyPath}`);
+          return { ...m, proxyPath: null };
+        }
+        return m;
+      });
+
       const engine = getPreviewEngine();
       const chunks = await engine.initialize(
         options.timeline,
-        options.media,
+        sanitizedMedia,
         options.settings,
         options.duration,
         options.projectPath,
@@ -722,10 +745,18 @@ function registerIPCHandlers() {
     }
   ) => {
     try {
+      // Sanitize media: clear proxy paths that don't exist
+      const sanitizedMedia = options.media.map(m => {
+        if (m.proxyPath && !fsSync.existsSync(m.proxyPath)) {
+          return { ...m, proxyPath: null };
+        }
+        return m;
+      });
+
       const engine = getPreviewEngine();
       await engine.updateTimeline(
         options.timeline,
-        options.media,
+        sanitizedMedia,
         options.settings,
         options.duration
       );

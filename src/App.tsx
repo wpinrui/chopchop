@@ -16,7 +16,7 @@ import PreviewPipelineIndicator from './components/PreviewPipelineIndicator/Prev
 import { usePreviewRenderer } from './hooks/usePreviewRenderer';
 import { addTrack, loadTimeline } from './store/timelineSlice';
 import { setActivePane } from './store/uiSlice';
-import { loadProject, setProjectPath, markClean, updateMediaItem } from './store/projectSlice';
+import { loadProject, setProjectPath, markClean, updateMediaItem, clearAllProxies } from './store/projectSlice';
 import { performUndo, performRedo, selectCanUndo, selectCanRedo, clearHistory } from './store/historySlice';
 import type { AppDispatch } from './store';
 import type { Project, Timeline as TimelineType, MediaItem } from '@types';
@@ -54,6 +54,7 @@ const App: React.FC = () => {
   const activePane = useSelector((state: RootState) => state.ui.activePane);
   const mediaBinRef = useRef<MediaBinHandle>(null);
   const tracksInitialized = useRef(false);
+  const checkedProxiesRef = useRef<Set<string>>(new Set());
 
   // Default layout values
   const DEFAULT_TOP_ROW_HEIGHT = 60;
@@ -161,6 +162,9 @@ const App: React.FC = () => {
       // Clear history for fresh project
       dispatch(clearHistory());
 
+      // Clear checked proxies so they get rechecked
+      checkedProxiesRef.current.clear();
+
       // Load the timeline first
       dispatch(loadTimeline(projectFile.timeline));
 
@@ -256,6 +260,38 @@ const App: React.FC = () => {
     }
   }, [dispatch, canRedo]);
 
+  // Check and cleanup missing proxy files
+  useEffect(() => {
+    const cleanupMissingProxies = async () => {
+      let cleanedCount = 0;
+      for (const item of projectMedia) {
+        if (item.proxyPath && !checkedProxiesRef.current.has(item.proxyPath)) {
+          checkedProxiesRef.current.add(item.proxyPath);
+          try {
+            const exists = await window.electronAPI.file.exists(item.proxyPath);
+            console.log(`[App] Checking proxy: ${item.proxyPath} - exists: ${exists}`);
+            if (!exists) {
+              dispatch(updateMediaItem({ id: item.id, updates: { proxyPath: null } }));
+              cleanedCount++;
+            }
+          } catch (err) {
+            console.error(`[App] Error checking proxy ${item.proxyPath}:`, err);
+            // If check fails, clear the proxy path to be safe
+            dispatch(updateMediaItem({ id: item.id, updates: { proxyPath: null } }));
+            cleanedCount++;
+          }
+        }
+      }
+      if (cleanedCount > 0) {
+        console.log(`[App] Cleaned up ${cleanedCount} missing proxy reference(s)`);
+      }
+    };
+
+    if (projectMedia.length > 0) {
+      cleanupMissingProxies();
+    }
+  }, [projectMedia, dispatch]);
+
   // Initialize default tracks
   useEffect(() => {
     if (!tracksInitialized.current && tracks.length === 0) {
@@ -322,6 +358,11 @@ const App: React.FC = () => {
           setStatusMessage('Failed to clear cache');
           console.error('Failed to clear preview cache:', error);
         }
+      }),
+      window.electronAPI.menu.onClearProxyReferences(() => {
+        dispatch(clearAllProxies());
+        setStatusMessage('Proxy references cleared');
+        setTimeout(() => setStatusMessage('Ready'), 2000);
       }),
     ];
 

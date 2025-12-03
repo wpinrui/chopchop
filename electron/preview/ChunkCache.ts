@@ -276,7 +276,10 @@ export class ChunkCache {
         if (clip.timelineStart < endTime && clipEnd > startTime) {
           // This clip overlaps with the chunk
           const mediaItem = media.find((m) => m.id === clip.mediaId);
-          const mediaPath = mediaItem?.proxyPath || mediaItem?.path || '';
+          // Use proxy path only if the file exists
+          const mediaPath = mediaItem?.proxyPath && fs.existsSync(mediaItem.proxyPath)
+            ? mediaItem.proxyPath
+            : (mediaItem?.path || '');
 
           hashData.push(
             `${clip.mediaId}|${clip.mediaIn.toFixed(3)}|${clip.mediaOut.toFixed(3)}|` +
@@ -297,7 +300,10 @@ export class ChunkCache {
         const clipEnd = clip.timelineStart + clip.duration;
         if (clip.timelineStart < endTime && clipEnd > startTime) {
           const mediaItem = media.find((m) => m.id === clip.mediaId);
-          const mediaPath = mediaItem?.proxyPath || mediaItem?.path || '';
+          // Use proxy path only if the file exists
+          const mediaPath = mediaItem?.proxyPath && fs.existsSync(mediaItem.proxyPath)
+            ? mediaItem.proxyPath
+            : (mediaItem?.path || '');
 
           hashData.push(
             `audio:${clip.mediaId}|${clip.mediaIn.toFixed(3)}|${clip.mediaOut.toFixed(3)}|` +

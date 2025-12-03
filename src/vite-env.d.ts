@@ -40,6 +40,7 @@ interface ElectronAPI {
   };
 
   file: {
+    exists: (filePath: string) => Promise<boolean>;
     readText: (filePath: string) => Promise<string>;
     writeText: (filePath: string, content: string) => Promise<void>;
     showSaveDialog: (options: any) => Promise<string | undefined>;
@@ -244,6 +245,7 @@ interface ElectronAPI {
     onResetLayout: (callback: () => void) => () => void;
     onRegeneratePreview: (callback: () => void) => () => void;
     onClearPreviewCache: (callback: () => void) => () => void;
+    onClearProxyReferences: (callback: () => void) => () => void;
   };
 }
 

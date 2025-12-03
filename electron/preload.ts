@@ -40,6 +40,7 @@ const electronAPI = {
 
   // File operations
   file: {
+    exists: (filePath: string): Promise<boolean> => ipcRenderer.invoke('file:exists', filePath),
     readText: (filePath: string) => ipcRenderer.invoke('file:readText', filePath),
     writeText: (filePath: string, content: string) =>
       ipcRenderer.invoke('file:writeText', filePath, content),
@@ -278,6 +279,10 @@ const electronAPI = {
     onClearPreviewCache: (callback: () => void) => {
       ipcRenderer.on('menu:clearPreviewCache', callback);
       return () => ipcRenderer.removeListener('menu:clearPreviewCache', callback);
+    },
+    onClearProxyReferences: (callback: () => void) => {
+      ipcRenderer.on('menu:clearProxyReferences', callback);
+      return () => ipcRenderer.removeListener('menu:clearProxyReferences', callback);
     },
   },
 };

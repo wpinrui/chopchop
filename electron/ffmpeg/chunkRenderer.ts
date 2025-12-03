@@ -164,9 +164,10 @@ export async function renderChunk(
     if (mediaIndexMap.has(mediaItem.id)) {
       return mediaIndexMap.get(mediaItem.id)!;
     }
-    // Use proxy if enabled and available
-    // Always use proxy when available for faster preview rendering
-    const mediaPath = mediaItem.proxyPath || mediaItem.path;
+    // Use proxy if available and exists on disk
+    const mediaPath = mediaItem.proxyPath && fs.existsSync(mediaItem.proxyPath)
+      ? mediaItem.proxyPath
+      : mediaItem.path;
     const idx = inputs.length;
     inputs.push({ path: mediaPath, mediaId: mediaItem.id, index: idx });
     mediaIndexMap.set(mediaItem.id, idx);
@@ -670,8 +671,10 @@ export async function renderFullPreview(
     if (mediaIndexMap.has(mediaItem.id)) {
       return mediaIndexMap.get(mediaItem.id)!;
     }
-    // Always use proxy when available for faster preview rendering
-    const mediaPath = mediaItem.proxyPath || mediaItem.path;
+    // Use proxy if available and exists on disk
+    const mediaPath = mediaItem.proxyPath && fs.existsSync(mediaItem.proxyPath)
+      ? mediaItem.proxyPath
+      : mediaItem.path;
     const idx = inputs.length;
     inputs.push({ path: mediaPath, mediaId: mediaItem.id, index: idx });
     mediaIndexMap.set(mediaItem.id, idx);
