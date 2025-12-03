@@ -46,8 +46,10 @@ type DisplayMode = 'video' | 'canvas';
 const ProgramMonitor: React.FC = () => {
   const dispatch = useDispatch();
 
-  // Refs
+  // Refs - dual video elements for gapless chunk transitions
   const videoRef = useRef<HTMLVideoElement>(null);
+  const preloadVideoRef = useRef<HTMLVideoElement>(null);
+  const activeVideoRef = useRef<0 | 1>(0); // Which video is currently playing (0 = videoRef, 1 = preloadVideoRef)
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const scrubBarRef = useRef<HTMLDivElement>(null);
@@ -107,6 +109,14 @@ const ProgramMonitor: React.FC = () => {
     startTime: 0,
     endTime: 0,
   });
+
+  // Track preloaded chunk for gapless transitions
+  const preloadedChunkRef = useRef<{
+    startTime: number;
+    endTime: number;
+    path: string;
+    ready: boolean;
+  } | null>(null);
 
   // Calculate timeline duration
   const timelineDuration = Math.max(
@@ -194,6 +204,57 @@ const ProgramMonitor: React.FC = () => {
     }
   }, [playheadPosition, isPlaying, isScrubbing, previewState.isInitialized, extractAndRenderFrame]);
 
+  // Helper to get the current active video element
+  const getActiveVideo = useCallback(() => {
+    return activeVideoRef.current === 0 ? videoRef.current : preloadVideoRef.current;
+  }, []);
+
+  // Helper to get the preload video element (the one not currently playing)
+  const getPreloadVideo = useCallback(() => {
+    return activeVideoRef.current === 0 ? preloadVideoRef.current : videoRef.current;
+  }, []);
+
+  // Preload the next chunk into the inactive video element
+  const preloadNextChunk = useCallback(async (currentChunkEndTime: number) => {
+    if (currentChunkEndTime >= timelineDuration) {
+      preloadedChunkRef.current = null;
+      return;
+    }
+
+    const nextPlaybackInfo = await previewActions.getPlaybackInfo(currentChunkEndTime);
+    if (nextPlaybackInfo.mode === 'chunk' && nextPlaybackInfo.chunkPath) {
+      const preloadVideo = getPreloadVideo();
+      if (preloadVideo) {
+        const chunkUrl = `file:///${nextPlaybackInfo.chunkPath.replace(/\\/g, '/')}`;
+
+        // Set up preload
+        preloadVideo.src = chunkUrl;
+        preloadVideo.currentTime = 0;
+        preloadVideo.muted = isMuted;
+
+        preloadedChunkRef.current = {
+          startTime: nextPlaybackInfo.chunkStartTime,
+          endTime: nextPlaybackInfo.chunkEndTime,
+          path: nextPlaybackInfo.chunkPath,
+          ready: false,
+        };
+
+        // Wait for preload to be ready
+        await new Promise<void>((resolve) => {
+          preloadVideo.oncanplaythrough = () => {
+            if (preloadedChunkRef.current) {
+              preloadedChunkRef.current.ready = true;
+            }
+            resolve();
+          };
+          preloadVideo.onerror = () => resolve();
+        });
+      }
+    } else {
+      preloadedChunkRef.current = null;
+    }
+  }, [timelineDuration, previewActions, getPreloadVideo, isMuted]);
+
   // Play handler - uses pre-rendered chunks for all playback
   const handlePlay = useCallback(async (speed: number = 1) => {
     // Wrap around to start if playhead is at or beyond timeline duration
@@ -207,7 +268,7 @@ const ProgramMonitor: React.FC = () => {
 
     // If we have a chunk, play from it
     if (playbackInfo.mode === 'chunk' && playbackInfo.chunkPath) {
-      const video = videoRef.current;
+      const video = getActiveVideo();
       if (video) {
         setIsPlaying(true);
         setDisplayMode('video');
@@ -236,6 +297,9 @@ const ProgramMonitor: React.FC = () => {
         video.currentTime = startTime - playbackInfo.chunkStartTime;
         video.muted = isMuted;
         video.play();
+
+        // Start preloading the next chunk
+        preloadNextChunk(playbackInfo.chunkEndTime);
         return;
       }
     }
@@ -247,27 +311,40 @@ const ProgramMonitor: React.FC = () => {
       setDisplayMode('canvas');
     }
     setShowLoadingDialog(true);
-  }, [playheadPosition, timelineDuration, dispatch, previewActions, isMuted, renderFrame]);
+  }, [playheadPosition, timelineDuration, dispatch, previewActions, isMuted, renderFrame, getActiveVideo, preloadNextChunk]);
 
   // Pause handler
   const handlePause = useCallback(async () => {
-    const video = videoRef.current;
-    if (video) {
-      video.pause();
-    }
+    // Pause both videos
+    videoRef.current?.pause();
+    preloadVideoRef.current?.pause();
 
     setIsPlaying(false);
     setDisplayMode('canvas');
     setPlaybackDirection(0);
     dispatch(setPlayingPane(null));
 
+    // Clear preloaded chunk
+    preloadedChunkRef.current = null;
+
     // Extract frame at pause position for full quality display
-    const currentTime = playbackDirection === -1 ? playheadPosition : (video?.currentTime ?? playheadPosition);
+    let currentTime: number;
+    if (playbackDirection === -1) {
+      currentTime = playheadPosition;
+    } else {
+      // Get time from active video and convert to timeline position
+      const activeVideo = getActiveVideo();
+      if (activeVideo && activeVideo.currentTime > 0) {
+        currentTime = currentChunkRef.current.startTime + activeVideo.currentTime;
+      } else {
+        currentTime = playheadPosition;
+      }
+    }
 
     dispatch(setPlayheadPosition(currentTime));
     lastExtractedTimeRef.current = currentTime;
     await extractAndRenderFrame(currentTime);
-  }, [dispatch, playheadPosition, extractAndRenderFrame, playbackDirection]);
+  }, [dispatch, playheadPosition, extractAndRenderFrame, playbackDirection, getActiveVideo]);
 
   // Toggle play/pause
   const handlePlayPause = useCallback(() => {
@@ -427,74 +504,124 @@ const ProgramMonitor: React.FC = () => {
     };
   }, [isScrubbing, getTimeFromMouseX, previewActions, renderFrame, dispatch, extractAndRenderFrame]);
 
-  // Video timeupdate handler - sync to Redux during playback
+  // Store refs for use in event handlers (to avoid stale closures)
+  const preloadNextChunkRef = useRef(preloadNextChunk);
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
+    preloadNextChunkRef.current = preloadNextChunk;
+  }, [preloadNextChunk]);
 
-    const handleTimeUpdate = () => {
-      if (isPlaying && playbackDirection === 1) {
-        // Calculate actual timeline position from chunk-relative video time
-        const timelinePosition = currentChunkRef.current.startTime + video.currentTime;
-        dispatch(setPlayheadPosition(timelinePosition));
-      }
-    };
+  // Video timeupdate and ended handlers for both video elements
+  useEffect(() => {
+    const video1 = videoRef.current;
+    const video2 = preloadVideoRef.current;
+    if (!video1 || !video2) return;
 
-    const handleEnded = async () => {
-      // When chunk ends, calculate the timeline position at chunk end
-      const chunkEndTime = currentChunkRef.current.endTime;
+    const createHandlers = (video: HTMLVideoElement, videoIndex: 0 | 1) => {
+      const handleTimeUpdate = () => {
+        // Only process events from the active video
+        if (activeVideoRef.current !== videoIndex) return;
+        if (isPlaying && playbackDirection === 1) {
+          // Calculate actual timeline position from chunk-relative video time
+          const timelinePosition = currentChunkRef.current.startTime + video.currentTime;
+          dispatch(setPlayheadPosition(timelinePosition));
+        }
+      };
 
-      // Check if we've reached the end of the timeline
-      if (chunkEndTime >= timelineDuration) {
-        // End of timeline - stop playback
-        setIsPlaying(false);
-        setDisplayMode('canvas');
-        dispatch(setPlayingPane(null));
-        dispatch(setPlayheadPosition(timelineDuration));
-        lastExtractedTimeRef.current = timelineDuration;
-        await extractAndRenderFrame(timelineDuration);
-      } else {
-        // More content ahead - load and play next chunk
-        const nextTime = chunkEndTime;
-        const playbackInfo = await previewActions.getPlaybackInfo(nextTime);
+      const handleEnded = async () => {
+        // Only process events from the active video
+        if (activeVideoRef.current !== videoIndex) return;
 
-        if (playbackInfo.mode === 'chunk' && playbackInfo.chunkPath) {
-          // Store new chunk info
-          currentChunkRef.current = {
-            startTime: playbackInfo.chunkStartTime,
-            endTime: playbackInfo.chunkEndTime,
-          };
+        // When chunk ends, calculate the timeline position at chunk end
+        const chunkEndTime = currentChunkRef.current.endTime;
 
-          // Load and play next chunk
-          const chunkUrl = `file:///${playbackInfo.chunkPath.replace(/\\/g, '/')}`;
-          video.src = chunkUrl;
-          await new Promise<void>((resolve) => {
-            video.onloadedmetadata = () => resolve();
-            video.onerror = () => resolve();
-          });
-
-          video.currentTime = 0;
-          video.playbackRate = playbackSpeed;
-          video.play();
-        } else {
-          // Next chunk not ready - pause and show loading
+        // Check if we've reached the end of the timeline
+        if (chunkEndTime >= timelineDuration) {
+          // End of timeline - stop playback
           setIsPlaying(false);
           setDisplayMode('canvas');
           dispatch(setPlayingPane(null));
-          dispatch(setPlayheadPosition(nextTime));
-          lastExtractedTimeRef.current = nextTime;
-          await extractAndRenderFrame(nextTime);
-          setShowLoadingDialog(true);
+          dispatch(setPlayheadPosition(timelineDuration));
+          lastExtractedTimeRef.current = timelineDuration;
+          await extractAndRenderFrame(timelineDuration);
+        } else {
+          // Check if we have a preloaded chunk ready
+          const preloaded = preloadedChunkRef.current;
+          if (preloaded && preloaded.ready) {
+            // Swap to preloaded video (gapless transition)
+            const nextVideo = videoIndex === 0 ? video2 : video1;
+            activeVideoRef.current = videoIndex === 0 ? 1 : 0;
+
+            // Update chunk info
+            currentChunkRef.current = {
+              startTime: preloaded.startTime,
+              endTime: preloaded.endTime,
+            };
+
+            // Clear preloaded ref
+            preloadedChunkRef.current = null;
+
+            // Start playback on preloaded video
+            nextVideo.playbackRate = playbackSpeed;
+            nextVideo.play();
+
+            // Start preloading the NEXT chunk
+            preloadNextChunkRef.current(preloaded.endTime);
+          } else {
+            // Fallback: load chunk normally (will have a gap)
+            const nextTime = chunkEndTime;
+            const playbackInfo = await previewActions.getPlaybackInfo(nextTime);
+
+            if (playbackInfo.mode === 'chunk' && playbackInfo.chunkPath) {
+              // Store new chunk info
+              currentChunkRef.current = {
+                startTime: playbackInfo.chunkStartTime,
+                endTime: playbackInfo.chunkEndTime,
+              };
+
+              // Load and play next chunk on same video
+              const chunkUrl = `file:///${playbackInfo.chunkPath.replace(/\\/g, '/')}`;
+              video.src = chunkUrl;
+              await new Promise<void>((resolve) => {
+                video.onloadedmetadata = () => resolve();
+                video.onerror = () => resolve();
+              });
+
+              video.currentTime = 0;
+              video.playbackRate = playbackSpeed;
+              video.play();
+
+              // Start preloading next chunk
+              preloadNextChunkRef.current(playbackInfo.chunkEndTime);
+            } else {
+              // Next chunk not ready - pause and show loading
+              setIsPlaying(false);
+              setDisplayMode('canvas');
+              dispatch(setPlayingPane(null));
+              dispatch(setPlayheadPosition(nextTime));
+              lastExtractedTimeRef.current = nextTime;
+              await extractAndRenderFrame(nextTime);
+              setShowLoadingDialog(true);
+            }
+          }
         }
-      }
+      };
+
+      return { handleTimeUpdate, handleEnded };
     };
 
-    video.addEventListener('timeupdate', handleTimeUpdate);
-    video.addEventListener('ended', handleEnded);
+    const handlers1 = createHandlers(video1, 0);
+    const handlers2 = createHandlers(video2, 1);
+
+    video1.addEventListener('timeupdate', handlers1.handleTimeUpdate);
+    video1.addEventListener('ended', handlers1.handleEnded);
+    video2.addEventListener('timeupdate', handlers2.handleTimeUpdate);
+    video2.addEventListener('ended', handlers2.handleEnded);
 
     return () => {
-      video.removeEventListener('timeupdate', handleTimeUpdate);
-      video.removeEventListener('ended', handleEnded);
+      video1.removeEventListener('timeupdate', handlers1.handleTimeUpdate);
+      video1.removeEventListener('ended', handlers1.handleEnded);
+      video2.removeEventListener('timeupdate', handlers2.handleTimeUpdate);
+      video2.removeEventListener('ended', handlers2.handleEnded);
     };
   }, [isPlaying, playbackDirection, playbackSpeed, timelineDuration, dispatch, extractAndRenderFrame, previewActions]);
 
@@ -746,30 +873,34 @@ const ProgramMonitor: React.FC = () => {
     ? Math.min(100, Math.max(0, (playheadPosition / timelineDuration) * 100))
     : 0;
 
-  // Preview video source
-  const previewSrc = preview.filePath
-    ? `file:///${preview.filePath.replace(/\\/g, '/')}`
-    : '';
-
   return (
     <div className="program-monitor" onClick={handlePaneClick}>
       <div className="program-video-container" ref={containerRef}>
-        {/* Preview video element - for pre-rendered preview playback */}
-        {previewSrc && (
-          <video
-            key={previewSrc}
-            ref={videoRef}
-            src={previewSrc}
-            className="program-preview-video"
-            muted={isMuted}
-            style={{
-              width: displaySize.width,
-              height: displaySize.height,
-              backgroundColor,
-              display: displayMode === 'video' ? 'block' : 'none',
-            }}
-          />
-        )}
+        {/* Primary video element - for chunk playback */}
+        <video
+          ref={videoRef}
+          className="program-preview-video"
+          muted={isMuted}
+          style={{
+            width: displaySize.width,
+            height: displaySize.height,
+            backgroundColor,
+            display: displayMode === 'video' && activeVideoRef.current === 0 ? 'block' : 'none',
+          }}
+        />
+
+        {/* Secondary video element - for preloading and gapless transitions */}
+        <video
+          ref={preloadVideoRef}
+          className="program-preview-video"
+          muted={isMuted}
+          style={{
+            width: displaySize.width,
+            height: displaySize.height,
+            backgroundColor,
+            display: displayMode === 'video' && activeVideoRef.current === 1 ? 'block' : 'none',
+          }}
+        />
 
         {/* Canvas - for pause/scrub frame display */}
         <canvas

@@ -31,7 +31,7 @@ import { FrameExtractor } from './FrameExtractor';
 import { ScrubAudioController } from './ScrubAudioController';
 import { analyzeTimelineComplexity, isTimePointComplex } from './complexityDetector';
 
-const DEFAULT_CHUNK_DURATION = 2; // seconds
+const DEFAULT_CHUNK_DURATION = 5; // seconds - longer chunks = fewer transitions
 const MAX_CONCURRENT_RENDERS = 2;
 const FRAME_CACHE_SIZE = 30;
 
