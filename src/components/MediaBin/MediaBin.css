@@ -47,23 +47,51 @@
 .media-bin-toolbar {
   display: flex;
   align-items: center;
-  padding: var(--spacing-sm);
+  gap: var(--spacing-xs);
+  padding: 4px var(--spacing-sm);
   border-bottom: 1px solid var(--border-color);
+  background-color: var(--bg-tertiary);
 }
 
-.import-button {
-  padding: 6px 12px;
-  font-size: 12px;
-  background-color: var(--accent-blue);
-  color: var(--text-primary);
-  border: none;
+.toolbar-button {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  background-color: transparent;
+  color: var(--text-secondary);
+  border: 1px solid transparent;
   border-radius: 3px;
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: all 0.15s;
 }
 
-.import-button:hover {
-  background-color: var(--accent-blue-hover);
+.toolbar-button:hover:not(:disabled) {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-light);
+}
+
+.toolbar-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.toolbar-button svg {
+  flex-shrink: 0;
+}
+
+.toolbar-button.import-button:hover:not(:disabled) {
+  background-color: rgba(58, 131, 255, 0.15);
+  color: var(--accent-blue);
+  border-color: var(--accent-blue);
+}
+
+.toolbar-button.remove-button:hover:not(:disabled) {
+  background-color: rgba(231, 76, 60, 0.15);
+  color: #e74c3c;
+  border-color: #e74c3c;
 }
 
 .media-list {
@@ -118,6 +146,15 @@
 .media-item:hover {
   background-color: var(--bg-hover);
   border-color: var(--border-light);
+}
+
+.media-item.selected {
+  background-color: rgba(58, 131, 255, 0.15);
+  border-color: var(--accent-blue);
+}
+
+.media-item.selected:hover {
+  background-color: rgba(58, 131, 255, 0.2);
 }
 
 .media-item:active {

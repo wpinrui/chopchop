@@ -68,6 +68,13 @@ const timelineSlice = createSlice({
       });
     },
 
+    // Remove all clips that reference a specific media item
+    removeClipsByMediaId: (state, action: PayloadAction<string>) => {
+      state.tracks.forEach((track) => {
+        track.clips = track.clips.filter((c) => c.mediaId !== action.payload);
+      });
+    },
+
     updateClip: (
       state,
       action: PayloadAction<{ id: string; updates: Partial<Clip> }>
@@ -146,6 +153,7 @@ export const {
   updateTrack,
   addClip,
   removeClip,
+  removeClipsByMediaId,
   updateClip,
   unlinkClips,
   linkClips,

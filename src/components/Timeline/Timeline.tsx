@@ -29,7 +29,6 @@ const Timeline: React.FC = () => {
   const justFinishedDraggingRef = useRef(false);
 
   const [zoom, setZoom] = useState(0.01); // Zoom multiplier (exponential scale), default 1%
-  const [scrollLeft, setScrollLeft] = useState(0);
   const [viewportWidth, setViewportWidth] = useState(0);
   const [draggingClip, setDraggingClip] = useState<{ id: string; initialStart: number; mouseOffset: number } | null>(null);
   const [snapEnabled, setSnapEnabled] = useState(true);
@@ -255,6 +254,54 @@ const Timeline: React.FC = () => {
     }
   }, [tracks, dispatch]);
 
+  // Get all snap points (other clip edges and playhead)
+  const getSnapPoints = useCallback((excludeClipId: string): number[] => {
+    const points: number[] = [playhead]; // Always include playhead
+
+    for (const track of tracks) {
+      for (const c of track.clips) {
+        if (c.id !== excludeClipId) {
+          points.push(c.timelineStart); // Clip start
+          points.push(c.timelineStart + c.duration); // Clip end
+        }
+      }
+    }
+
+    return points;
+  }, [tracks, playhead]);
+
+  // Find nearest snap point for a given time
+  const findSnapPoint = useCallback((time: number, clipDuration: number, excludeClipId: string): number => {
+    if (!snapEnabled) return time;
+
+    const snapPoints = getSnapPoints(excludeClipId);
+    const thresholdTime = pixelsToTime(SNAP_THRESHOLD_PX);
+
+    let bestSnap = time;
+    let bestDistance = Infinity;
+
+    // Check clip start snapping to snap points
+    for (const point of snapPoints) {
+      const distance = Math.abs(time - point);
+      if (distance < thresholdTime && distance < bestDistance) {
+        bestSnap = point;
+        bestDistance = distance;
+      }
+    }
+
+    // Check clip end snapping to snap points
+    const clipEnd = time + clipDuration;
+    for (const point of snapPoints) {
+      const distance = Math.abs(clipEnd - point);
+      if (distance < thresholdTime && distance < bestDistance) {
+        bestSnap = point - clipDuration;
+        bestDistance = distance;
+      }
+    }
+
+    return Math.max(0, bestSnap);
+  }, [snapEnabled, getSnapPoints, pixelsToTime, SNAP_THRESHOLD_PX]);
+
   // Handle drop from SourcePreview
   const handleTrackDrop = useCallback((e: React.DragEvent, trackId: string) => {
     e.preventDefault();
@@ -280,13 +327,17 @@ const Timeline: React.FC = () => {
       }
 
       // Calculate drop position in timeline
+      // getBoundingClientRect already accounts for scroll, so don't add scrollLeft
       if (!timelineRef.current) return;
       const rect = timelineRef.current.getBoundingClientRect();
       const dropX = e.clientX - rect.left;
-      const dropTime = pixelsToTime(dropX + scrollLeft);
+      const rawDropTime = pixelsToTime(dropX);
 
       // Calculate clip duration from in/out points
       const clipDuration = outPoint - inPoint;
+
+      // Apply snapping to the drop position (use empty string since this is a new clip)
+      const dropTime = findSnapPoint(rawDropTime, clipDuration, '');
 
       // Determine which track to use based on drag type and target track
       const track = tracks.find(t => t.id === trackId);
@@ -362,34 +413,7 @@ const Timeline: React.FC = () => {
     } catch (error) {
       console.error('Error dropping media on timeline:', error);
     }
-  }, [dispatch, pixelsToTime, scrollLeft, media, tracks, handleOverlapsOnDrop, sequenceInitialized]);
-
-  const handleTrackDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    e.dataTransfer.dropEffect = 'copy';
-
-    // Read from global drag source (dataTransfer.getData is blocked during dragOver for security)
-    const dragSource = (window as any).__chopchopDragSource as {
-      mediaId: string;
-      type: 'video' | 'audio' | 'both';
-      inPoint: number;
-      outPoint: number;
-    } | null;
-
-    if (dragSource && timelineRef.current) {
-      const rect = timelineRef.current.getBoundingClientRect();
-      const xPosition = e.clientX - rect.left;
-      const duration = dragSource.outPoint - dragSource.inPoint;
-
-      setDragPreview({
-        mediaId: dragSource.mediaId,
-        type: dragSource.type,
-        duration,
-        xPosition,
-      });
-    }
-  }, []);
+  }, [dispatch, pixelsToTime, findSnapPoint, media, tracks, handleOverlapsOnDrop, sequenceInitialized]);
 
   const handleTrackDragLeave = useCallback((e: React.DragEvent) => {
     // Only clear if leaving the timeline area entirely
@@ -428,53 +452,42 @@ const Timeline: React.FC = () => {
     return linkedClips;
   }, [tracks]);
 
-  // Get all snap points (other clip edges and playhead)
-  const getSnapPoints = useCallback((excludeClipId: string): number[] => {
-    const points: number[] = [playhead]; // Always include playhead
+  // Handle drag over for source preview drops (with snapping)
+  const handleTrackDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'copy';
 
-    for (const track of tracks) {
-      for (const c of track.clips) {
-        if (c.id !== excludeClipId) {
-          points.push(c.timelineStart); // Clip start
-          points.push(c.timelineStart + c.duration); // Clip end
-        }
+    // Read from global drag source (dataTransfer.getData is blocked during dragOver for security)
+    const dragSource = (window as any).__chopchopDragSource as {
+      mediaId: string;
+      type: 'video' | 'audio' | 'both';
+      inPoint: number;
+      outPoint: number;
+    } | null;
+
+    if (dragSource && timelineRef.current) {
+      const rect = timelineRef.current.getBoundingClientRect();
+      const rawXPosition = e.clientX - rect.left;
+      const duration = dragSource.outPoint - dragSource.inPoint;
+
+      // Apply snapping to the preview position
+      let xPosition = rawXPosition;
+      if (snapEnabled) {
+        const rawTime = pixelsToTime(rawXPosition);
+        // Use empty string for excludeClipId since this is a new clip being dragged in
+        const snappedTime = findSnapPoint(rawTime, duration, '');
+        xPosition = timeToPixels(snappedTime);
       }
+
+      setDragPreview({
+        mediaId: dragSource.mediaId,
+        type: dragSource.type,
+        duration,
+        xPosition,
+      });
     }
-
-    return points;
-  }, [tracks, playhead]);
-
-  // Find nearest snap point for a given time
-  const findSnapPoint = useCallback((time: number, clipDuration: number, excludeClipId: string): number => {
-    if (!snapEnabled) return time;
-
-    const snapPoints = getSnapPoints(excludeClipId);
-    const thresholdTime = pixelsToTime(SNAP_THRESHOLD_PX);
-
-    let bestSnap = time;
-    let bestDistance = Infinity;
-
-    // Check clip start snapping to snap points
-    for (const point of snapPoints) {
-      const distance = Math.abs(time - point);
-      if (distance < thresholdTime && distance < bestDistance) {
-        bestSnap = point;
-        bestDistance = distance;
-      }
-    }
-
-    // Check clip end snapping to snap points
-    const clipEnd = time + clipDuration;
-    for (const point of snapPoints) {
-      const distance = Math.abs(clipEnd - point);
-      if (distance < thresholdTime && distance < bestDistance) {
-        bestSnap = point - clipDuration;
-        bestDistance = distance;
-      }
-    }
-
-    return Math.max(0, bestSnap);
-  }, [snapEnabled, getSnapPoints, pixelsToTime, SNAP_THRESHOLD_PX]);
+  }, [snapEnabled, pixelsToTime, timeToPixels, findSnapPoint]);
 
   // Handle clip drag start
   const handleClipMouseDown = useCallback((e: React.MouseEvent, clip: Clip) => {
@@ -646,11 +659,6 @@ const Timeline: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [dispatch, selectedClipIds]);
 
-  // Sync scroll position from native scrollbar
-  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    setScrollLeft(e.currentTarget.scrollLeft);
-  }, []);
-
   // Zoom with centering on playhead (if visible)
   const zoomWithPlayheadCenter = useCallback((newZoom: number) => {
     if (!scrollContainerRef.current) {
@@ -814,7 +822,6 @@ const Timeline: React.FC = () => {
         <div
           className="timeline-area"
           ref={scrollContainerRef}
-          onScroll={handleScroll}
           onWheel={handleWheel}
         >
           <div

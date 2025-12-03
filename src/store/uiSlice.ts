@@ -16,6 +16,7 @@ interface ExtendedUIState extends UIState {
   sourceMediaId: string | null;
   sourceInPoint: number | null;
   sourceOutPoint: number | null;
+  selectedMediaId: string | null; // Selected media item in media bin
 }
 
 const initialState: ExtendedUIState = {
@@ -33,6 +34,7 @@ const initialState: ExtendedUIState = {
   sourceMediaId: null,
   sourceInPoint: null,
   sourceOutPoint: null,
+  selectedMediaId: null,
 };
 
 const uiSlice = createSlice({
@@ -111,6 +113,11 @@ const uiSlice = createSlice({
     setPlayingPane: (state, action: PayloadAction<PlayingPane>) => {
       state.playingPane = action.payload;
     },
+
+    // Media bin selection
+    setSelectedMediaId: (state, action: PayloadAction<string | null>) => {
+      state.selectedMediaId = action.payload;
+    },
   },
 });
 
@@ -130,6 +137,7 @@ export const {
   setSourceOutPoint,
   setActivePane,
   setPlayingPane,
+  setSelectedMediaId,
 } = uiSlice.actions;
 
 export type { ActivePane, PlayingPane };

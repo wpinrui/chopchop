@@ -4,11 +4,12 @@
  * Displays imported media files with thumbnails and metadata.
  */
 
-import React, { useCallback, useState, useImperativeHandle, forwardRef, useEffect } from 'react';
+import React, { useCallback, useState, useImperativeHandle, forwardRef, useEffect, useRef } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import type { RootState } from '../../store';
-import { addMediaItem, updateMediaItem } from '../../store/projectSlice';
-import { setSourceMediaId } from '../../store/uiSlice';
+import { addMediaItem, updateMediaItem, removeMediaItem } from '../../store/projectSlice';
+import { setSourceMediaId, setSelectedMediaId, setActivePane } from '../../store/uiSlice';
+import { removeClipsByMediaId } from '../../store/timelineSlice';
 import type { MediaItem } from '@types';
 import './MediaBin.css';
 
@@ -24,10 +25,14 @@ export interface MediaBinHandle {
 const MediaBin = forwardRef<MediaBinHandle>((_props, ref) => {
   const dispatch = useDispatch();
   const media = useSelector((state: RootState) => state.project.media);
+  const timeline = useSelector((state: RootState) => state.timeline);
+  const selectedMediaId = useSelector((state: RootState) => state.ui.selectedMediaId);
+  const activePane = useSelector((state: RootState) => state.ui.activePane);
   const proxyEnabled = useSelector((state: RootState) => state.project.settings.proxyEnabled);
   const proxyScale = useSelector((state: RootState) => state.project.settings.proxyScale);
   const [isDragOver, setIsDragOver] = useState(false);
   const [proxyProgress, setProxyProgress] = useState<ProxyProgress>({});
+  const containerRef = useRef<HTMLDivElement>(null);
 
   // Listen for proxy generation progress events
   useEffect(() => {
@@ -257,17 +262,123 @@ const MediaBin = forwardRef<MediaBinHandle>((_props, ref) => {
     return `${(mb / 1024).toFixed(1)} GB`;
   };
 
+  // Find clips that use a specific media item
+  const findClipsUsingMedia = useCallback((mediaId: string): number => {
+    let count = 0;
+    for (const track of timeline.tracks) {
+      for (const clip of track.clips) {
+        if (clip.mediaId === mediaId) {
+          count++;
+        }
+      }
+    }
+    return count;
+  }, [timeline.tracks]);
+
+  // Handle media item selection
+  const handleMediaClick = useCallback((mediaId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    dispatch(setSelectedMediaId(mediaId));
+    dispatch(setActivePane('mediaBin'));
+  }, [dispatch]);
+
+  // Handle media item deletion
+  const handleDeleteMedia = useCallback(async (mediaId: string) => {
+    const mediaItem = media.find(m => m.id === mediaId);
+    if (!mediaItem) return;
+
+    const clipCount = findClipsUsingMedia(mediaId);
+
+    if (clipCount > 0) {
+      // Warn user that media is in use
+      const confirmed = window.confirm(
+        `"${mediaItem.name}" is used by ${clipCount} clip${clipCount > 1 ? 's' : ''} in the timeline.\n\nRemoving this media will also remove those clips. Continue?`
+      );
+
+      if (!confirmed) return;
+
+      // Remove clips from timeline first
+      dispatch(removeClipsByMediaId(mediaId));
+    }
+
+    // Clean up proxy file if it exists
+    if (mediaItem.proxyPath && window.electronAPI) {
+      try {
+        await window.electronAPI.media.deleteProxy(mediaItem.proxyPath);
+      } catch (err) {
+        console.error('Failed to delete proxy file:', err);
+      }
+    }
+
+    // Remove media from project
+    dispatch(removeMediaItem(mediaId));
+
+    // Clear selection if this was the selected media
+    if (selectedMediaId === mediaId) {
+      dispatch(setSelectedMediaId(null));
+    }
+
+    // Clear source if this was the source media
+    dispatch(setSourceMediaId(null));
+  }, [dispatch, media, selectedMediaId, findClipsUsingMedia]);
+
+  // Handle remove button click
+  const handleRemoveClick = useCallback(() => {
+    if (selectedMediaId) {
+      handleDeleteMedia(selectedMediaId);
+    }
+  }, [selectedMediaId, handleDeleteMedia]);
+
+  // Handle keyboard events
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only handle delete if media bin is active and a media item is selected
+      if (activePane !== 'mediaBin' || !selectedMediaId) return;
+
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        handleDeleteMedia(selectedMediaId);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activePane, selectedMediaId, handleDeleteMedia]);
+
+  // Clear selection when clicking on empty area
+  const handleContainerClick = useCallback((e: React.MouseEvent) => {
+    if (e.target === containerRef.current || (e.target as HTMLElement).classList.contains('media-list')) {
+      dispatch(setSelectedMediaId(null));
+    }
+  }, [dispatch]);
+
   return (
     <div
+      ref={containerRef}
       className={`media-bin ${isDragOver ? 'drag-over' : ''}`}
       onDragOver={handleDragOver}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
+      onClick={handleContainerClick}
     >
       <div className="media-bin-toolbar">
-        <button className="import-button" onClick={handleImport}>
-          Import Media
+        <button className="toolbar-button import-button" onClick={handleImport} title="Import Media">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          <span>Import</span>
+        </button>
+        <button
+          className="toolbar-button remove-button"
+          onClick={handleRemoveClick}
+          disabled={!selectedMediaId}
+          title="Remove Selected Media (Delete)"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6" />
+          </svg>
+          <span>Remove</span>
         </button>
       </div>
 
@@ -290,11 +401,13 @@ const MediaBin = forwardRef<MediaBinHandle>((_props, ref) => {
             const isGeneratingProxy = proxyProgress[item.id] !== undefined;
             const proxyPercent = proxyProgress[item.id] ?? 0;
             const hasProxy = !!item.proxyPath;
+            const isSelected = selectedMediaId === item.id;
 
             return (
               <div
                 key={item.id}
-                className="media-item"
+                className={`media-item ${isSelected ? 'selected' : ''}`}
+                onClick={(e) => handleMediaClick(item.id, e)}
                 onDoubleClick={() => dispatch(setSourceMediaId(item.id))}
               >
                 <div className="media-thumbnail">
