@@ -23,7 +23,22 @@ import type {
   Clip,
   ProjectSettings,
 } from './types';
-import { analyzeSegmentComplexity } from './complexityDetector';
+
+/**
+ * Simple complexity check - returns true if any clip overlaps the time range
+ */
+function hasContentInRange(timeline: Timeline, startTime: number, endTime: number): boolean {
+  for (const track of timeline.tracks) {
+    for (const clip of track.clips) {
+      if (!clip.enabled) continue;
+      const clipEnd = clip.timelineStart + clip.duration;
+      if (clip.timelineStart < endTime && clipEnd > startTime) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
 
 const MANIFEST_VERSION = 1;
 const MANIFEST_FILENAME = 'manifest.json';
@@ -111,7 +126,7 @@ export class ChunkCache {
       const startTime = i * this.chunkDuration;
       const endTime = Math.min((i + 1) * this.chunkDuration, duration);
 
-      const complexity = analyzeSegmentComplexity(timeline, startTime, endTime);
+      const isComplex = hasContentInRange(timeline, startTime, endTime);
       const contentHash = this.computeChunkHash(timeline, media, startTime, endTime);
 
       // Check if we have a cached file for this hash
@@ -137,7 +152,7 @@ export class ChunkCache {
         status,
         filePath,
         contentHash,
-        isComplex: complexity.isComplex,
+        isComplex,
       });
     }
 
@@ -159,7 +174,7 @@ export class ChunkCache {
       const startTime = i * this.chunkDuration;
       const endTime = Math.min((i + 1) * this.chunkDuration, duration);
 
-      const complexity = analyzeSegmentComplexity(timeline, startTime, endTime);
+      const isComplex = hasContentInRange(timeline, startTime, endTime);
       const contentHash = this.computeChunkHash(timeline, media, startTime, endTime);
 
       // Find existing manifest entry
@@ -194,7 +209,7 @@ export class ChunkCache {
         status,
         filePath,
         contentHash,
-        isComplex: complexity.isComplex,
+        isComplex,
       });
     }
 

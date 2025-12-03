@@ -13,7 +13,6 @@ import SequenceSettings from './components/SequenceSettings/SequenceSettings';
 import ExportDialog from './components/ExportDialog/ExportDialog';
 import ProxyProgressIndicator from './components/ProxyProgressIndicator/ProxyProgressIndicator';
 import PreviewPipelineIndicator from './components/PreviewPipelineIndicator/PreviewPipelineIndicator';
-import { usePreviewRenderer } from './hooks/usePreviewRenderer';
 import { addTrack, loadTimeline } from './store/timelineSlice';
 import { setActivePane } from './store/uiSlice';
 import { loadProject, setProjectPath, setProjectName, markClean, updateMediaItemSilent, clearAllProxies } from './store/projectSlice';
@@ -36,9 +35,6 @@ interface ProjectFile {
 
 const App: React.FC = () => {
   const dispatch = useDispatch<AppDispatch>();
-
-  // Initialize background preview renderer
-  const { forceRender } = usePreviewRenderer();
 
   // Undo/redo state
   const canUndo = useSelector(selectCanUndo);
@@ -358,9 +354,10 @@ const App: React.FC = () => {
       window.electronAPI.menu.onUndo(handleUndo),
       window.electronAPI.menu.onRedo(handleRedo),
       window.electronAPI.menu.onResetLayout(handleResetLayout),
-      window.electronAPI.menu.onRegeneratePreview(() => {
-        forceRender();
+      window.electronAPI.menu.onRegeneratePreview(async () => {
         setStatusMessage('Regenerating preview...');
+        await window.electronAPI.simplePreview.clearCache();
+        await window.electronAPI.simplePreview.renderFullPreview();
       }),
       window.electronAPI.menu.onClearPreviewCache(async () => {
         setStatusMessage('Clearing preview cache...');
@@ -381,7 +378,7 @@ const App: React.FC = () => {
     ];
 
     return () => cleanups.forEach(cleanup => cleanup());
-  }, [handleOpen, handleSave, handleSaveAs, handleExport, handleUndo, handleRedo, loadProjectFromPath, handleResetLayout, forceRender]);
+  }, [handleOpen, handleSave, handleSaveAs, handleExport, handleUndo, handleRedo, loadProjectFromPath, handleResetLayout]);
 
   // Handle unsaved changes check when closing
   useEffect(() => {

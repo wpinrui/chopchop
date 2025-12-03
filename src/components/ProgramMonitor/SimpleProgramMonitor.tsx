@@ -55,13 +55,16 @@ const SimpleProgramMonitor: React.FC = () => {
   // Redux state
   const tracks = useSelector((state: RootState) => state.timeline.tracks);
   const playheadPosition = useSelector((state: RootState) => state.timeline.playheadPosition);
-  const fps = useSelector((state: RootState) => state.project.settings.frameRate);
+  const media = useSelector((state: RootState) => state.project.media);
+  const settings = useSelector((state: RootState) => state.project.settings);
+  const projectPath = useSelector((state: RootState) => state.project.path);
+  const fps = settings.frameRate;
   const activePane = useSelector((state: RootState) => state.ui.activePane);
   const playingPane = useSelector((state: RootState) => state.ui.playingPane);
 
   // Sequence settings
-  const sequenceResolution = useSelector((state: RootState) => state.project.settings.resolution);
-  const backgroundColor = useSelector((state: RootState) => state.project.settings.backgroundColor);
+  const sequenceResolution = settings.resolution;
+  const backgroundColor = settings.backgroundColor;
 
   const [seqWidth, seqHeight] = sequenceResolution;
 
@@ -176,12 +179,33 @@ const SimpleProgramMonitor: React.FC = () => {
     };
   }, []);
 
-  // Initialize preview when timeline has content
+  // Initialize preview engine with timeline data
   useEffect(() => {
     if (!window.electronAPI || timelineDuration <= 0) return;
 
-    window.electronAPI.simplePreview.initialize();
-  }, [timelineDuration]);
+    // Call preview:init with full timeline data to initialize the engine
+    window.electronAPI.preview.init({
+      timeline: { tracks },
+      media: media.map(m => ({
+        id: m.id,
+        name: m.name,
+        path: m.path,
+        proxyPath: m.proxyPath,
+        type: m.type,
+        duration: m.duration,
+        metadata: m.metadata,
+      })),
+      settings: {
+        resolution: settings.resolution,
+        frameRate: settings.frameRate,
+        backgroundColor: settings.backgroundColor,
+        proxyEnabled: settings.proxyEnabled,
+        previewBitrate: settings.previewBitrate,
+      },
+      duration: timelineDuration,
+      projectPath,
+    });
+  }, [timelineDuration, tracks, media, settings, projectPath]);
 
   // Play handler
   const handlePlay = useCallback(async () => {
