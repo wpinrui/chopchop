@@ -42,6 +42,13 @@ const Timeline: React.FC = () => {
     xPosition: number;
   } | null>(null);
 
+  // Context menu state for gap operations
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    gapStart: number;
+  } | null>(null);
+
   // Snap threshold in pixels
   const SNAP_THRESHOLD_PX = 10;
 
@@ -302,6 +309,128 @@ const Timeline: React.FC = () => {
 
     return Math.max(0, bestSnap);
   }, [snapEnabled, getSnapPoints, pixelsToTime, SNAP_THRESHOLD_PX]);
+
+  // Find gap at a specific time position on a track
+  const findGapAtPosition = useCallback((trackId: string, time: number): { start: number; end: number } | null => {
+    const track = tracks.find(t => t.id === trackId);
+    if (!track || track.clips.length === 0) return null;
+
+    // Sort clips by start time
+    const sortedClips = [...track.clips].sort((a, b) => a.timelineStart - b.timelineStart);
+
+    // Check gap before first clip
+    if (time < sortedClips[0].timelineStart && time >= 0) {
+      return { start: 0, end: sortedClips[0].timelineStart };
+    }
+
+    // Check gaps between clips
+    for (let i = 0; i < sortedClips.length - 1; i++) {
+      const currentClipEnd = sortedClips[i].timelineStart + sortedClips[i].duration;
+      const nextClipStart = sortedClips[i + 1].timelineStart;
+
+      if (currentClipEnd < nextClipStart && time >= currentClipEnd && time < nextClipStart) {
+        return { start: currentClipEnd, end: nextClipStart };
+      }
+    }
+
+    return null;
+  }, [tracks]);
+
+  // Ripple delete a gap - shift all clips on all tracks to the left until any clip hits another
+  const rippleDeleteGap = useCallback((gapStart: number) => {
+    // Find all clips across ALL tracks that start at or after the gap start
+    const clipsToMove: { clipId: string; trackId: string; start: number }[] = [];
+
+    for (const track of tracks) {
+      for (const clip of track.clips) {
+        if (clip.timelineStart >= gapStart) {
+          clipsToMove.push({ clipId: clip.id, trackId: track.id, start: clip.timelineStart });
+        }
+      }
+    }
+
+    if (clipsToMove.length === 0) {
+      setContextMenu(null);
+      return;
+    }
+
+    // Calculate the maximum amount we can shift left
+    // Limited by how far each moving clip can go before hitting a stationary clip on its track
+    let maxShift = Infinity;
+
+    for (const { trackId, start } of clipsToMove) {
+      const track = tracks.find(t => t.id === trackId);
+      if (!track) continue;
+
+      // Find clips on the same track that are NOT moving (start before gapStart)
+      const stationaryClips = track.clips.filter(c =>
+        c.timelineStart < gapStart
+      );
+
+      if (stationaryClips.length > 0) {
+        // Find the nearest stationary clip's end
+        const nearestEnd = Math.max(...stationaryClips.map(c => c.timelineStart + c.duration));
+        const availableSpace = start - nearestEnd;
+        maxShift = Math.min(maxShift, availableSpace);
+      } else {
+        // No stationary clips on this track, can move all the way to 0
+        maxShift = Math.min(maxShift, start);
+      }
+    }
+
+    if (maxShift <= 0 || !isFinite(maxShift)) {
+      setContextMenu(null);
+      return;
+    }
+
+    // Shift all clips
+    for (const { clipId, start } of clipsToMove) {
+      dispatch(updateClip({
+        id: clipId,
+        updates: { timelineStart: start - maxShift }
+      }));
+    }
+
+    setContextMenu(null);
+  }, [tracks, dispatch]);
+
+  // Handle right-click on track to show context menu for gaps
+  const handleTrackContextMenu = useCallback((e: React.MouseEvent, trackId: string) => {
+    e.preventDefault();
+
+    if (!timelineRef.current) return;
+
+    const rect = timelineRef.current.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const clickTime = pixelsToTime(clickX);
+
+    // Check if we clicked on a gap on the clicked track
+    const gap = findGapAtPosition(trackId, clickTime);
+    if (!gap || gap.end - gap.start <= 0) return;
+
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      gapStart: gap.start,
+    });
+  }, [pixelsToTime, findGapAtPosition]);
+
+  // Close context menu when clicking elsewhere
+  useEffect(() => {
+    const handleClick = () => setContextMenu(null);
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setContextMenu(null);
+    };
+
+    if (contextMenu) {
+      window.addEventListener('click', handleClick);
+      window.addEventListener('keydown', handleKeyDown);
+      return () => {
+        window.removeEventListener('click', handleClick);
+        window.removeEventListener('keydown', handleKeyDown);
+      };
+    }
+  }, [contextMenu]);
 
   // Handle drop from SourcePreview
   const handleTrackDrop = useCallback((e: React.DragEvent, trackId: string) => {
@@ -874,6 +1003,7 @@ const Timeline: React.FC = () => {
                 className="track"
                 onDragOver={handleTrackDragOver}
                 onDrop={(e) => handleTrackDrop(e, track.id)}
+                onContextMenu={(e) => handleTrackContextMenu(e, track.id)}
               >
                 {/* Ghost clip preview during drag */}
                 {showGhost && (
@@ -970,6 +1100,26 @@ const Timeline: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Gap Context Menu */}
+      {contextMenu && (
+        <div
+          className="timeline-context-menu"
+          style={{
+            position: 'fixed',
+            left: contextMenu.x,
+            top: contextMenu.y,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            className="context-menu-item"
+            onClick={() => rippleDeleteGap(contextMenu.gapStart)}
+          >
+            Ripple Delete
+          </button>
+        </div>
+      )}
     </div>
   );
 };
