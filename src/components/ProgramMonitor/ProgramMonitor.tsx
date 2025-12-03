@@ -1,11 +1,11 @@
 /**
- * Program Monitor Component - Hybrid Preview Architecture
+ * Program Monitor Component - Chunk-Based Preview
  *
- * High-performance video playback using:
- * - Native video.play() for forward playback of pre-rendered preview
- * - Canvas + frame extraction from source files for pause/scrub (full quality)
+ * All playback uses pre-rendered chunks for consistency:
+ * - Forward playback via native video.play() on chunk files
+ * - Canvas + frame extraction for pause/scrub
  * - Pitch-shifted audio during scrubbing
- * - Single-frame audio for frame stepping (accurate cutting)
+ * - Single-frame audio for frame stepping
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -90,15 +90,6 @@ const ProgramMonitor: React.FC = () => {
   const [playbackSpeed, setPlaybackSpeed] = useState(1); // Current speed magnitude
   const [playbackDirection, setPlaybackDirection] = useState<-1 | 0 | 1>(0); // -1 = backward, 0 = paused, 1 = forward
 
-  // Source playback mode - for playing directly from source files
-  const [sourcePlaybackInfo, setSourcePlaybackInfo] = useState<{
-    enabled: boolean;
-    mediaPath: string;
-    clipStart: number; // Timeline start of current clip
-    clipEnd: number; // Timeline end of current clip
-    mediaOffset: number; // Offset into the source file
-  } | null>(null);
-  const sourceVideoRef = useRef<HTMLVideoElement>(null);
 
   // Hybrid preview system
   const [previewState, previewActions] = useHybridPreview();
@@ -109,6 +100,12 @@ const ProgramMonitor: React.FC = () => {
     lastTime: 0,
     lastPosition: 0,
     isActive: false,
+  });
+
+  // Track current chunk info for playback position calculation
+  const currentChunkRef = useRef({
+    startTime: 0,
+    endTime: 0,
   });
 
   // Calculate timeline duration
@@ -197,7 +194,7 @@ const ProgramMonitor: React.FC = () => {
     }
   }, [playheadPosition, isPlaying, isScrubbing, previewState.isInitialized, extractAndRenderFrame]);
 
-  // Play handler - supports progressive playback from source
+  // Play handler - uses pre-rendered chunks for all playback
   const handlePlay = useCallback(async (speed: number = 1) => {
     // Wrap around to start if playhead is at or beyond timeline duration
     const startTime = playheadPosition >= timelineDuration ? 0 : playheadPosition;
@@ -205,29 +202,24 @@ const ProgramMonitor: React.FC = () => {
       dispatch(setPlayheadPosition(startTime));
     }
 
-    // Check if we can play directly from source (simple segment)
+    // Get playback info for the current position
     const playbackInfo = await previewActions.getPlaybackInfo(startTime);
-    const clipInfo = await previewActions.getClipAtTime(startTime);
 
-    // DEBUG: Log playback decision
-    console.log('[ProgramMonitor] handlePlay:', {
-      startTime,
-      playbackInfo,
-      clipInfo,
-      previewReady,
-    });
-
-    // If this is a complex segment with a pre-rendered chunk, use chunk playback
-    if (playbackInfo.isComplex && playbackInfo.mode === 'chunk' && playbackInfo.chunkPath) {
-      console.log('[ProgramMonitor] Using CHUNK playback:', playbackInfo.chunkPath);
+    // If we have a chunk, play from it
+    if (playbackInfo.mode === 'chunk' && playbackInfo.chunkPath) {
       const video = videoRef.current;
       if (video) {
-        setSourcePlaybackInfo(null);
         setIsPlaying(true);
         setDisplayMode('video');
         setPlaybackDirection(1);
         setPlaybackSpeed(speed);
         dispatch(setPlayingPane('program'));
+
+        // Store chunk info for position calculation
+        currentChunkRef.current = {
+          startTime: playbackInfo.chunkStartTime,
+          endTime: playbackInfo.chunkEndTime,
+        };
 
         // Play from pre-rendered chunk
         const chunkUrl = `file:///${playbackInfo.chunkPath.replace(/\\/g, '/')}`;
@@ -248,86 +240,20 @@ const ProgramMonitor: React.FC = () => {
       }
     }
 
-    // If this is a simple segment and we have a clip, play from source
-    if (!playbackInfo.isComplex && clipInfo?.hasClip && clipInfo.mediaPath) {
-      console.log('[ProgramMonitor] Using SOURCE playback (simple segment):', clipInfo.mediaPath);
-      const sourceVideo = sourceVideoRef.current;
-      if (sourceVideo) {
-        // Find the clip boundaries for monitoring when to switch
-        const clip = tracks.flatMap(t => t.clips).find(c => {
-          const clipStart = c.timelineStart;
-          const clipEnd = c.timelineStart + c.duration;
-          return startTime >= clipStart && startTime < clipEnd;
-        });
-
-        if (clip) {
-          setSourcePlaybackInfo({
-            enabled: true,
-            mediaPath: clipInfo.mediaPath,
-            clipStart: clip.timelineStart,
-            clipEnd: clip.timelineStart + clip.duration,
-            mediaOffset: clip.mediaIn - clip.timelineStart,
-          });
-
-          setIsPlaying(true);
-          setDisplayMode('video');
-          setPlaybackDirection(1);
-          setPlaybackSpeed(speed);
-          dispatch(setPlayingPane('program'));
-
-          // Set source and seek to correct position
-          const srcUrl = `file:///${clipInfo.mediaPath.replace(/\\/g, '/')}`;
-          if (sourceVideo.src !== srcUrl) {
-            sourceVideo.src = srcUrl;
-            await new Promise<void>((resolve) => {
-              sourceVideo.onloadedmetadata = () => resolve();
-              sourceVideo.onerror = () => resolve();
-            });
-          }
-
-          sourceVideo.playbackRate = speed;
-          sourceVideo.currentTime = clipInfo.mediaTime;
-          sourceVideo.muted = isMuted;
-          sourceVideo.play();
-          return;
-        }
-      }
+    // No chunk available - show frame and wait for render
+    const frame = await previewActions.extractFrame(startTime);
+    if (frame) {
+      renderFrame(frame);
+      setDisplayMode('canvas');
     }
-
-    // Fall back to pre-rendered preview if available
-    if (previewReady) {
-      console.log('[ProgramMonitor] Using LEGACY preview playback');
-      const video = videoRef.current;
-      if (!video) return;
-
-      setSourcePlaybackInfo(null);
-      setIsPlaying(true);
-      setDisplayMode('video');
-      setPlaybackDirection(1);
-      setPlaybackSpeed(speed);
-      dispatch(setPlayingPane('program'));
-
-      video.playbackRate = speed;
-      video.currentTime = startTime;
-      video.play();
-      return;
-    }
-
-    // No source clip and no preview ready - show loading dialog
     setShowLoadingDialog(true);
-  }, [previewReady, playheadPosition, timelineDuration, dispatch, previewActions, tracks, isMuted]);
+  }, [playheadPosition, timelineDuration, dispatch, previewActions, isMuted, renderFrame]);
 
   // Pause handler
   const handlePause = useCallback(async () => {
-    // Pause both video elements
     const video = videoRef.current;
-    const sourceVideo = sourceVideoRef.current;
-
     if (video) {
       video.pause();
-    }
-    if (sourceVideo) {
-      sourceVideo.pause();
     }
 
     setIsPlaying(false);
@@ -336,26 +262,12 @@ const ProgramMonitor: React.FC = () => {
     dispatch(setPlayingPane(null));
 
     // Extract frame at pause position for full quality display
-    // Determine current time based on which playback mode we're in
-    let currentTime: number;
-    if (playbackDirection === -1) {
-      // Reverse playback - use playheadPosition
-      currentTime = playheadPosition;
-    } else if (sourcePlaybackInfo?.enabled && sourceVideo) {
-      // Source playback - calculate timeline time from source video
-      currentTime = sourceVideo.currentTime - sourcePlaybackInfo.mediaOffset;
-    } else if (video) {
-      // Preview playback
-      currentTime = video.currentTime;
-    } else {
-      currentTime = playheadPosition;
-    }
+    const currentTime = playbackDirection === -1 ? playheadPosition : (video?.currentTime ?? playheadPosition);
 
-    setSourcePlaybackInfo(null);
     dispatch(setPlayheadPosition(currentTime));
     lastExtractedTimeRef.current = currentTime;
     await extractAndRenderFrame(currentTime);
-  }, [dispatch, playheadPosition, extractAndRenderFrame, playbackDirection, sourcePlaybackInfo]);
+  }, [dispatch, playheadPosition, extractAndRenderFrame, playbackDirection]);
 
   // Toggle play/pause
   const handlePlayPause = useCallback(() => {
@@ -515,26 +427,65 @@ const ProgramMonitor: React.FC = () => {
     };
   }, [isScrubbing, getTimeFromMouseX, previewActions, renderFrame, dispatch, extractAndRenderFrame]);
 
-  // Video timeupdate handler - sync to Redux during playback (preview video)
+  // Video timeupdate handler - sync to Redux during playback
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
 
     const handleTimeUpdate = () => {
-      // Only sync if we're playing from preview (not source)
-      if (isPlaying && !sourcePlaybackInfo?.enabled) {
-        dispatch(setPlayheadPosition(video.currentTime));
+      if (isPlaying && playbackDirection === 1) {
+        // Calculate actual timeline position from chunk-relative video time
+        const timelinePosition = currentChunkRef.current.startTime + video.currentTime;
+        dispatch(setPlayheadPosition(timelinePosition));
       }
     };
 
-    const handleEnded = () => {
-      if (!sourcePlaybackInfo?.enabled) {
+    const handleEnded = async () => {
+      // When chunk ends, calculate the timeline position at chunk end
+      const chunkEndTime = currentChunkRef.current.endTime;
+
+      // Check if we've reached the end of the timeline
+      if (chunkEndTime >= timelineDuration) {
+        // End of timeline - stop playback
         setIsPlaying(false);
         setDisplayMode('canvas');
         dispatch(setPlayingPane(null));
         dispatch(setPlayheadPosition(timelineDuration));
         lastExtractedTimeRef.current = timelineDuration;
-        extractAndRenderFrame(timelineDuration);
+        await extractAndRenderFrame(timelineDuration);
+      } else {
+        // More content ahead - load and play next chunk
+        const nextTime = chunkEndTime;
+        const playbackInfo = await previewActions.getPlaybackInfo(nextTime);
+
+        if (playbackInfo.mode === 'chunk' && playbackInfo.chunkPath) {
+          // Store new chunk info
+          currentChunkRef.current = {
+            startTime: playbackInfo.chunkStartTime,
+            endTime: playbackInfo.chunkEndTime,
+          };
+
+          // Load and play next chunk
+          const chunkUrl = `file:///${playbackInfo.chunkPath.replace(/\\/g, '/')}`;
+          video.src = chunkUrl;
+          await new Promise<void>((resolve) => {
+            video.onloadedmetadata = () => resolve();
+            video.onerror = () => resolve();
+          });
+
+          video.currentTime = 0;
+          video.playbackRate = playbackSpeed;
+          video.play();
+        } else {
+          // Next chunk not ready - pause and show loading
+          setIsPlaying(false);
+          setDisplayMode('canvas');
+          dispatch(setPlayingPane(null));
+          dispatch(setPlayheadPosition(nextTime));
+          lastExtractedTimeRef.current = nextTime;
+          await extractAndRenderFrame(nextTime);
+          setShowLoadingDialog(true);
+        }
       }
     };
 
@@ -545,261 +496,7 @@ const ProgramMonitor: React.FC = () => {
       video.removeEventListener('timeupdate', handleTimeUpdate);
       video.removeEventListener('ended', handleEnded);
     };
-  }, [isPlaying, timelineDuration, dispatch, extractAndRenderFrame, sourcePlaybackInfo?.enabled]);
-
-  // Source video timeupdate handler - sync to Redux and detect clip boundaries
-  useEffect(() => {
-    const sourceVideo = sourceVideoRef.current;
-    if (!sourceVideo || !sourcePlaybackInfo?.enabled) return;
-
-    const handleTimeUpdate = () => {
-      if (!isPlaying || !sourcePlaybackInfo) return;
-
-      // Calculate timeline time from source video time
-      const timelineTime = sourceVideo.currentTime - sourcePlaybackInfo.mediaOffset;
-      dispatch(setPlayheadPosition(timelineTime));
-
-      // Check if we've reached the end of the current clip
-      if (timelineTime >= sourcePlaybackInfo.clipEnd - 0.05) {
-        // Clip ended - check if there's another clip to play
-        handleClipBoundary(sourcePlaybackInfo.clipEnd);
-      }
-    };
-
-    const handleEnded = () => {
-      // Source file ended - pause playback
-      handlePause();
-    };
-
-    sourceVideo.addEventListener('timeupdate', handleTimeUpdate);
-    sourceVideo.addEventListener('ended', handleEnded);
-
-    return () => {
-      sourceVideo.removeEventListener('timeupdate', handleTimeUpdate);
-      sourceVideo.removeEventListener('ended', handleEnded);
-    };
-  }, [isPlaying, sourcePlaybackInfo, dispatch, handlePause]);
-
-  // Handle transition between clips during source playback
-  const handleClipBoundary = useCallback(async (boundaryTime: number) => {
-    // Check what's at the next position
-    const nextInfo = await previewActions.getPlaybackInfo(boundaryTime);
-    const nextClip = await previewActions.getClipAtTime(boundaryTime);
-
-    // If entering a complex segment with pre-rendered chunk, switch to chunk playback
-    if (nextInfo.isComplex && nextInfo.mode === 'chunk' && nextInfo.chunkPath) {
-      const sourceVideo = sourceVideoRef.current;
-      if (sourceVideo) {
-        sourceVideo.pause();
-      }
-
-      const video = videoRef.current;
-      if (video) {
-        setSourcePlaybackInfo(null);
-        setDisplayMode('video');
-
-        // Play from pre-rendered chunk
-        const chunkUrl = `file:///${nextInfo.chunkPath.replace(/\\/g, '/')}`;
-        if (video.src !== chunkUrl) {
-          video.src = chunkUrl;
-          await new Promise<void>((resolve) => {
-            video.onloadedmetadata = () => resolve();
-            video.onerror = () => resolve();
-          });
-        }
-
-        video.playbackRate = playbackSpeed;
-        // Seek within the chunk (time relative to chunk start)
-        video.currentTime = boundaryTime - nextInfo.chunkStartTime;
-        video.muted = isMuted;
-        video.play();
-        return;
-      }
-    }
-
-    if (!nextInfo.isComplex && nextClip?.hasClip && nextClip.mediaPath) {
-      // Another simple clip - switch to it
-      const clip = tracks.flatMap(t => t.clips).find(c => {
-        const clipStart = c.timelineStart;
-        const clipEnd = c.timelineStart + c.duration;
-        return boundaryTime >= clipStart && boundaryTime < clipEnd;
-      });
-
-      if (clip) {
-        const sourceVideo = sourceVideoRef.current;
-        if (sourceVideo) {
-          setSourcePlaybackInfo({
-            enabled: true,
-            mediaPath: nextClip.mediaPath,
-            clipStart: clip.timelineStart,
-            clipEnd: clip.timelineStart + clip.duration,
-            mediaOffset: clip.mediaIn - clip.timelineStart,
-          });
-
-          const srcUrl = `file:///${nextClip.mediaPath.replace(/\\/g, '/')}`;
-          if (sourceVideo.src !== srcUrl) {
-            sourceVideo.src = srcUrl;
-            await new Promise<void>((resolve) => {
-              sourceVideo.onloadedmetadata = () => resolve();
-              sourceVideo.onerror = () => resolve();
-            });
-          }
-
-          sourceVideo.currentTime = nextClip.mediaTime;
-          sourceVideo.play();
-          return;
-        }
-      }
-    }
-
-    // Check if we're in a gap - find the next clip
-    const allClips = tracks
-      .filter(t => t.type === 'video' && t.visible !== false)
-      .flatMap(t => t.clips)
-      .filter(c => c.enabled !== false);
-
-    // Find the next clip that starts after boundaryTime
-    const nextClipStart = allClips
-      .map(c => c.timelineStart)
-      .filter(start => start > boundaryTime)
-      .sort((a, b) => a - b)[0];
-
-    if (nextClipStart !== undefined && nextClipStart < timelineDuration) {
-      // There's a gap followed by another clip - play through the gap
-      const sourceVideo = sourceVideoRef.current;
-      if (sourceVideo) {
-        sourceVideo.pause();
-      }
-
-      // Set up gap playback info
-      setSourcePlaybackInfo({
-        enabled: true,
-        mediaPath: '', // Empty = gap
-        clipStart: boundaryTime,
-        clipEnd: nextClipStart,
-        mediaOffset: 0,
-      });
-
-      // Start a timer to advance through the gap
-      const startRealTime = performance.now();
-
-      const advanceGap = () => {
-        if (!isPlaying) return;
-
-        const elapsed = (performance.now() - startRealTime) / 1000 * playbackSpeed;
-        const currentGapTime = boundaryTime + elapsed;
-
-        if (currentGapTime >= nextClipStart) {
-          // Gap ended - transition to next clip
-          handleClipBoundary(nextClipStart);
-        } else {
-          // Still in gap - update playhead and show black
-          dispatch(setPlayheadPosition(currentGapTime));
-          requestAnimationFrame(advanceGap);
-        }
-      };
-
-      // Clear canvas to black for gap
-      const canvas = canvasRef.current;
-      if (canvas) {
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.fillStyle = 'black';
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-        }
-      }
-
-      requestAnimationFrame(advanceGap);
-      return;
-    }
-
-    // No more clips - check if we've reached timeline end
-    if (boundaryTime >= timelineDuration) {
-      handlePause();
-      dispatch(setPlayheadPosition(timelineDuration));
-      return;
-    }
-
-    // No more simple clips or hit a complex segment - pause
-    handlePause();
-  }, [previewActions, tracks, handlePause, timelineDuration, isPlaying, playbackSpeed, dispatch]);
-
-  // Render source video to canvas during source playback
-  // This handles resolution mismatch correctly: pad (black bars) for smaller sources, crop for larger sources
-  // CRITICAL: Source clips are NEVER auto-scaled to fit sequence - see claude.md
-  useEffect(() => {
-    if (!sourcePlaybackInfo?.enabled || !isPlaying) return;
-
-    const sourceVideo = sourceVideoRef.current;
-    const canvas = canvasRef.current;
-    if (!sourceVideo || !canvas) return;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    let animationId: number;
-
-    const drawFrame = () => {
-      if (!sourcePlaybackInfo?.enabled) return;
-
-      // Get source video dimensions
-      const srcWidth = sourceVideo.videoWidth;
-      const srcHeight = sourceVideo.videoHeight;
-
-      // Canvas (sequence) dimensions
-      const seqWidth = fullWidth;
-      const seqHeight = fullHeight;
-
-      // Clear canvas with background color
-      ctx.fillStyle = backgroundColor;
-      ctx.fillRect(0, 0, seqWidth, seqHeight);
-
-      if (srcWidth > 0 && srcHeight > 0) {
-        // Calculate draw parameters for center positioning WITHOUT scaling
-        // Source clips maintain their native resolution:
-        // - Smaller sources get padded (black bars)
-        // - Larger sources get cropped (center portion shown)
-
-        // Source rectangle (what part of the video to draw)
-        let sx = 0, sy = 0, sw = srcWidth, sh = srcHeight;
-
-        // Destination rectangle (where to draw on canvas)
-        let dx = 0, dy = 0, dw = srcWidth, dh = srcHeight;
-
-        // If source is larger than sequence, crop from center
-        if (srcWidth > seqWidth) {
-          sx = (srcWidth - seqWidth) / 2;
-          sw = seqWidth;
-          dw = seqWidth;
-          dx = 0;
-        } else {
-          // Source is smaller or equal - center it
-          dx = (seqWidth - srcWidth) / 2;
-        }
-
-        if (srcHeight > seqHeight) {
-          sy = (srcHeight - seqHeight) / 2;
-          sh = seqHeight;
-          dh = seqHeight;
-          dy = 0;
-        } else {
-          // Source is smaller or equal - center it
-          dy = (seqHeight - srcHeight) / 2;
-        }
-
-        // Draw the video frame with no scaling, proper crop/pad
-        ctx.drawImage(sourceVideo, sx, sy, sw, sh, dx, dy, dw, dh);
-      }
-
-      animationId = requestAnimationFrame(drawFrame);
-    };
-
-    animationId = requestAnimationFrame(drawFrame);
-
-    return () => {
-      cancelAnimationFrame(animationId);
-    };
-  }, [sourcePlaybackInfo?.enabled, isPlaying, fullWidth, fullHeight, backgroundColor]);
+  }, [isPlaying, playbackDirection, playbackSpeed, timelineDuration, dispatch, extractAndRenderFrame, previewActions]);
 
   // Handle reverse playback using requestAnimationFrame (HTML5 video doesn't support negative playbackRate)
   // Use refs to avoid effect restarting when callbacks change
@@ -998,9 +695,6 @@ const ProgramMonitor: React.FC = () => {
             if (videoRef.current) {
               videoRef.current.muted = !isMuted;
             }
-            if (sourceVideoRef.current) {
-              sourceVideoRef.current.muted = !isMuted;
-            }
           }
           break;
       }
@@ -1020,12 +714,8 @@ const ProgramMonitor: React.FC = () => {
   // Toggle mute
   const toggleMute = useCallback(() => {
     const video = videoRef.current;
-    const sourceVideo = sourceVideoRef.current;
     if (video) {
       video.muted = !isMuted;
-    }
-    if (sourceVideo) {
-      sourceVideo.muted = !isMuted;
     }
     setIsMuted(!isMuted);
   }, [isMuted]);
@@ -1076,23 +766,12 @@ const ProgramMonitor: React.FC = () => {
               width: displaySize.width,
               height: displaySize.height,
               backgroundColor,
-              display: displayMode === 'video' && !sourcePlaybackInfo?.enabled ? 'block' : 'none',
+              display: displayMode === 'video' ? 'block' : 'none',
             }}
           />
         )}
 
-        {/* Source video element - hidden, used for real-time decode during progressive playback */}
-        {/* We render to canvas to handle resolution mismatch correctly (pad/crop, no scaling) */}
-        <video
-          ref={sourceVideoRef}
-          className="program-preview-video"
-          muted={isMuted}
-          style={{
-            display: 'none', // Always hidden - we draw to canvas instead
-          }}
-        />
-
-        {/* Canvas - for pause/scrub display AND source playback (handles resolution correctly) */}
+        {/* Canvas - for pause/scrub frame display */}
         <canvas
           ref={canvasRef}
           width={fullWidth}
@@ -1102,7 +781,7 @@ const ProgramMonitor: React.FC = () => {
             width: displaySize.width,
             height: displaySize.height,
             backgroundColor,
-            display: displayMode === 'canvas' || sourcePlaybackInfo?.enabled ? 'block' : 'none',
+            display: displayMode === 'canvas' ? 'block' : 'none',
           }}
         />
 

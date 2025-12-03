@@ -171,6 +171,7 @@ interface ElectronAPI {
       mode: 'realtime' | 'chunk';
       chunkPath: string | null;
       chunkStartTime: number;
+      chunkEndTime: number;
       isComplex: boolean;
     }>;
 

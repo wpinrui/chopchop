@@ -65,6 +65,7 @@ export interface HybridPreviewActions {
     mode: 'realtime' | 'chunk';
     chunkPath: string | null;
     chunkStartTime: number;
+    chunkEndTime: number;
     isComplex: boolean;
   }>;
 
@@ -366,7 +367,7 @@ export function useHybridPreview(): [HybridPreviewState, HybridPreviewActions] {
   // Get playback info
   const getPlaybackInfo = useCallback(async (time: number) => {
     if (!window.electronAPI) {
-      return { mode: 'realtime' as const, chunkPath: null, chunkStartTime: 0, isComplex: false };
+      return { mode: 'realtime' as const, chunkPath: null, chunkStartTime: 0, chunkEndTime: 0, isComplex: false };
     }
     return window.electronAPI.preview.getPlaybackInfo(time);
   }, []);

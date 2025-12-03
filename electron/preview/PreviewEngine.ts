@@ -94,7 +94,7 @@ export class PreviewEngine {
     // Initialize cache and get chunk status
     this.chunks = await this.cache.initialize(timeline, media, settings, duration, projectPath);
 
-    // Analyze complexity for each chunk
+    // Analyze complexity for each chunk (all segments with content are complex)
     const complexityMap = analyzeTimelineComplexity(timeline, duration, DEFAULT_CHUNK_DURATION);
     for (let i = 0; i < this.chunks.length && i < complexityMap.length; i++) {
       this.chunks[i].isComplex = complexityMap[i].isComplex;
@@ -274,12 +274,13 @@ export class PreviewEngine {
 
   /**
    * Get playback info for a specific time
-   * Returns whether to use real-time decode or cached chunk
+   * Returns chunk path if available, null if still rendering
    */
   getPlaybackInfo(time: number): {
     mode: 'realtime' | 'chunk';
     chunkPath: string | null;
     chunkStartTime: number;
+    chunkEndTime: number;
     isComplex: boolean;
   } {
     const chunkIndex = Math.floor(time / DEFAULT_CHUNK_DURATION);
@@ -290,25 +291,28 @@ export class PreviewEngine {
         mode: 'realtime',
         chunkPath: null,
         chunkStartTime: 0,
+        chunkEndTime: 0,
         isComplex: false,
       };
     }
 
-    // If chunk is complex and we have a cached file, use it
+    // If chunk has content and we have a cached file, use it
     if (chunk.isComplex && chunk.status === 'valid' && chunk.filePath) {
       return {
         mode: 'chunk',
         chunkPath: chunk.filePath,
         chunkStartTime: chunk.startTime,
+        chunkEndTime: chunk.endTime,
         isComplex: true,
       };
     }
 
-    // Otherwise, use real-time decode
+    // Chunk not ready yet
     return {
       mode: 'realtime',
       chunkPath: null,
       chunkStartTime: chunk.startTime,
+      chunkEndTime: chunk.endTime,
       isComplex: chunk.isComplex,
     };
   }

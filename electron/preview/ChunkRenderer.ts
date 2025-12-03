@@ -104,8 +104,12 @@ export class ChunkRenderer {
    */
   queueChunk(chunk: ChunkInfo, priority: RenderPriority = 'normal'): void {
     // Don't queue if already rendering or queued
-    if (this.activeRenders.has(chunk.index)) return;
-    if (this.renderQueue.some((t) => t.chunkIndex === chunk.index)) return;
+    if (this.activeRenders.has(chunk.index)) {
+      return;
+    }
+    if (this.renderQueue.some((t) => t.chunkIndex === chunk.index)) {
+      return;
+    }
 
     const task: RenderTask = {
       chunkIndex: chunk.index,
@@ -159,7 +163,9 @@ export class ChunkRenderer {
    * Start rendering a chunk
    */
   private async startRender(chunkIndex: number): Promise<void> {
-    if (!this.timeline || !this.settings) return;
+    if (!this.timeline || !this.settings) {
+      return;
+    }
 
     const startTime = chunkIndex * this.chunkDuration;
     const endTime = startTime + this.chunkDuration;

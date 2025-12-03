@@ -1,11 +1,8 @@
 /**
  * Complexity Detector
  *
- * Determines whether a timeline segment is "simple" (can be played in real-time)
- * or "complex" (needs pre-rendering).
- *
- * Simple: Single video clip, no overlays, no effects
- * Complex: Multiple overlapping clips, effects, transitions, speed changes
+ * SIMPLIFIED: All segments with content are treated as complex.
+ * This ensures consistent chunk-based playback without hybrid mode switching.
  */
 
 import type {
@@ -13,69 +10,27 @@ import type {
   Track,
   Clip,
   SegmentComplexity,
-  ComplexityReason,
 } from './types';
 
 /**
  * Analyze complexity for a specific time range
+ * All segments with content are complex - use chunks for everything
  */
 export function analyzeSegmentComplexity(
   timeline: Timeline,
   startTime: number,
   endTime: number
 ): SegmentComplexity {
-  const reasons: ComplexityReason[] = [];
-
-  // Get all video tracks
-  const videoTracks = timeline.tracks.filter(
-    (t) => t.type === 'video' && t.visible !== false
+  const allTracks = timeline.tracks.filter(
+    (t) => (t.type === 'video' && t.visible !== false) || (t.type === 'audio' && !t.muted)
   );
-
-  // Get all audio tracks
-  const audioTracks = timeline.tracks.filter(
-    (t) => t.type === 'audio' && !t.muted
-  );
-
-  // Count overlapping video clips at any point in the segment
-  const videoClipsInRange = getClipsInTimeRange(videoTracks, startTime, endTime);
-
-  // Check for multiple overlapping video clips
-  if (hasOverlappingClips(videoClipsInRange, startTime, endTime)) {
-    reasons.push('multiple_clips');
-  }
-
-  // Count overlapping audio clips - multiple audio clips = complex (need mixing)
-  const audioClipsInRange = getClipsInTimeRange(audioTracks, startTime, endTime);
-  if (hasOverlappingClips(audioClipsInRange, startTime, endTime)) {
-    reasons.push('multiple_clips');
-  }
-
-  // Check for effects on any clip
-  for (const clip of videoClipsInRange) {
-    if (clipHasEffects(clip)) {
-      reasons.push('has_effects');
-      break;
-    }
-  }
-
-  // Check for speed changes (mediaIn/mediaOut vs duration mismatch)
-  for (const clip of videoClipsInRange) {
-    if (clipHasSpeedChange(clip)) {
-      reasons.push('speed_change');
-      break;
-    }
-  }
-
-  // TODO: Check for transitions when implemented
-  // if (hasTransitions(timeline, startTime, endTime)) {
-  //   reasons.push('has_transition');
-  // }
+  const hasContent = hasClipsInTimeRange(allTracks, startTime, endTime);
 
   return {
     startTime,
     endTime,
-    isComplex: reasons.length > 0,
-    reasons,
+    isComplex: hasContent,
+    reasons: [],
   };
 }
 
@@ -100,15 +55,13 @@ export function analyzeTimelineComplexity(
 }
 
 /**
- * Get all clips that overlap with a time range
+ * Check if there are any clips in a time range
  */
-function getClipsInTimeRange(
+function hasClipsInTimeRange(
   tracks: Track[],
   startTime: number,
   endTime: number
-): Clip[] {
-  const clips: Clip[] = [];
-
+): boolean {
   for (const track of tracks) {
     for (const clip of track.clips) {
       if (!clip.enabled) continue;
@@ -116,92 +69,28 @@ function getClipsInTimeRange(
       const clipStart = clip.timelineStart;
       const clipEnd = clip.timelineStart + clip.duration;
 
-      // Check if clip overlaps with time range
       if (clipStart < endTime && clipEnd > startTime) {
-        clips.push(clip);
+        return true;
       }
     }
   }
-
-  return clips;
-}
-
-/**
- * Check if there are overlapping clips at any point in the range
- */
-function hasOverlappingClips(
-  clips: Clip[],
-  startTime: number,
-  endTime: number
-): boolean {
-  // Sample at multiple points within the range
-  const sampleCount = 10;
-  const sampleInterval = (endTime - startTime) / sampleCount;
-
-  for (let i = 0; i <= sampleCount; i++) {
-    const sampleTime = startTime + i * sampleInterval;
-    let clipCount = 0;
-
-    for (const clip of clips) {
-      const clipStart = clip.timelineStart;
-      const clipEnd = clip.timelineStart + clip.duration;
-
-      if (sampleTime >= clipStart && sampleTime < clipEnd) {
-        clipCount++;
-        if (clipCount > 1) {
-          return true;
-        }
-      }
-    }
-  }
-
   return false;
 }
 
 /**
- * Check if a clip has any enabled effects
- */
-function clipHasEffects(clip: Clip): boolean {
-  if (!clip.effects || clip.effects.length === 0) {
-    return false;
-  }
-
-  return clip.effects.some((effect) => effect.enabled);
-}
-
-/**
- * Check if a clip has a speed change
- * A speed change is detected when the media duration doesn't match the clip duration
- */
-function clipHasSpeedChange(clip: Clip): boolean {
-  const mediaDuration = clip.mediaOut - clip.mediaIn;
-  const clipDuration = clip.duration;
-
-  // Allow small tolerance for floating point
-  const tolerance = 0.01;
-  return Math.abs(mediaDuration - clipDuration) > tolerance;
-}
-
-/**
- * Quick check if a specific time point is complex
+ * Quick check if a specific time point has content (always complex)
  */
 export function isTimePointComplex(
   timeline: Timeline,
   time: number
 ): { isComplex: boolean; clipCount: number; hasEffects: boolean } {
-  const videoTracks = timeline.tracks.filter(
-    (t) => t.type === 'video' && t.visible !== false
-  );
-  const audioTracks = timeline.tracks.filter(
-    (t) => t.type === 'audio' && !t.muted
+  const allTracks = timeline.tracks.filter(
+    (t) => (t.type === 'video' && t.visible !== false) || (t.type === 'audio' && !t.muted)
   );
 
-  let videoClipCount = 0;
-  let audioClipCount = 0;
-  let hasEffects = false;
+  let clipCount = 0;
 
-  // Count video clips at this time
-  for (const track of videoTracks) {
+  for (const track of allTracks) {
     for (const clip of track.clips) {
       if (!clip.enabled) continue;
 
@@ -209,39 +98,20 @@ export function isTimePointComplex(
       const clipEnd = clip.timelineStart + clip.duration;
 
       if (time >= clipStart && time < clipEnd) {
-        videoClipCount++;
-
-        if (clipHasEffects(clip)) {
-          hasEffects = true;
-        }
-      }
-    }
-  }
-
-  // Count audio clips at this time - multiple audio = complex (need mixing)
-  for (const track of audioTracks) {
-    for (const clip of track.clips) {
-      if (!clip.enabled) continue;
-
-      const clipStart = clip.timelineStart;
-      const clipEnd = clip.timelineStart + clip.duration;
-
-      if (time >= clipStart && time < clipEnd) {
-        audioClipCount++;
+        clipCount++;
       }
     }
   }
 
   return {
-    isComplex: videoClipCount > 1 || audioClipCount > 1 || hasEffects,
-    clipCount: videoClipCount,
-    hasEffects,
+    isComplex: clipCount > 0,
+    clipCount,
+    hasEffects: false,
   };
 }
 
 /**
- * Get the single clip at a time point (for simple segments)
- * Returns null if no clip or multiple clips
+ * Get the topmost video clip at a time point (for frame extraction)
  */
 export function getSingleClipAtTime(
   timeline: Timeline,
@@ -250,10 +120,6 @@ export function getSingleClipAtTime(
   const videoTracks = timeline.tracks.filter(
     (t) => t.type === 'video' && t.visible !== false
   );
-
-  let foundClip: Clip | null = null;
-  let foundTrack: Track | null = null;
-  let clipCount = 0;
 
   // Iterate in reverse order (top track first) to get the topmost clip
   for (let i = videoTracks.length - 1; i >= 0; i--) {
@@ -266,20 +132,9 @@ export function getSingleClipAtTime(
       const clipEnd = clip.timelineStart + clip.duration;
 
       if (time >= clipStart && time < clipEnd) {
-        clipCount++;
-        if (clipCount === 1) {
-          foundClip = clip;
-          foundTrack = track;
-        } else {
-          // Multiple clips found
-          return null;
-        }
+        return { clip, track };
       }
     }
-  }
-
-  if (foundClip && foundTrack) {
-    return { clip: foundClip, track: foundTrack };
   }
 
   return null;
