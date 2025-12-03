@@ -9,6 +9,7 @@ import uiReducer from './uiSlice';
 import previewReducer from './previewSlice';
 import historyReducer from './historySlice';
 import ffmpegReducer from './ffmpegSlice';
+import { undoMiddleware } from './undoMiddleware';
 
 export const store = configureStore({
   reducer: {
@@ -23,9 +24,9 @@ export const store = configureStore({
     getDefaultMiddleware({
       serializableCheck: {
         // Ignore these action types for serialization checks
-        ignoredActions: ['history/addEntry'],
+        ignoredActions: ['history/pushState', 'history/pushFuture', 'history/pushPast'],
       },
-    }),
+    }).concat(undoMiddleware),
 });
 
 export type RootState = ReturnType<typeof store.getState>;

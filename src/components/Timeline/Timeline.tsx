@@ -7,16 +7,17 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { Magnet, ZoomIn, ZoomOut, Link } from 'lucide-react';
-import type { RootState } from '../../store';
+import type { RootState, AppDispatch } from '../../store';
 import { setPlayheadPosition, addClip, updateClip, removeClip, unlinkClips, linkClips } from '../../store/timelineSlice';
 import { selectClip, addToSelection, removeFromSelection, clearSelection } from '../../store/uiSlice';
 import { initializeSequenceFromMedia } from '../../store/projectSlice';
+import { recordHistoryState } from '../../store/historySlice';
 import type { Clip } from '@types';
 import WaveformCanvas from './WaveformCanvas';
 import './Timeline.css';
 
 const Timeline: React.FC = () => {
-  const dispatch = useDispatch();
+  const dispatch = useDispatch<AppDispatch>();
   const tracks = useSelector((state: RootState) => state.timeline.tracks);
   const playhead = useSelector((state: RootState) => state.timeline.playheadPosition);
   const fps = useSelector((state: RootState) => state.project.settings.frameRate);
@@ -338,6 +339,9 @@ const Timeline: React.FC = () => {
 
   // Ripple delete a gap - shift all clips on all tracks to the left until any clip hits another
   const rippleDeleteGap = useCallback((gapStart: number) => {
+    // Record history before ripple delete
+    dispatch(recordHistoryState('Ripple Delete'));
+
     // Find all clips across ALL tracks that start at or after the gap start
     const clipsToMove: { clipId: string; trackId: string; start: number }[] = [];
 
@@ -695,6 +699,9 @@ const Timeline: React.FC = () => {
     const movedClipIds = Array.from(allClipIds);
     // Track the final applied delta (updated during drag)
     let finalDelta = 0;
+
+    // Record history state BEFORE starting the drag
+    dispatch(recordHistoryState('Move Clip'));
 
     setDraggingClip({ id: clip.id, initialStart: clip.timelineStart, mouseOffset });
 

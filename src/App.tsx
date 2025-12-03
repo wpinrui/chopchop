@@ -17,6 +17,8 @@ import { usePreviewRenderer } from './hooks/usePreviewRenderer';
 import { addTrack, loadTimeline } from './store/timelineSlice';
 import { setActivePane } from './store/uiSlice';
 import { loadProject, setProjectPath, markClean, updateMediaItem } from './store/projectSlice';
+import { performUndo, performRedo, selectCanUndo, selectCanRedo, clearHistory } from './store/historySlice';
+import type { AppDispatch } from './store';
 import type { Project, Timeline as TimelineType, MediaItem } from '@types';
 import './App.css';
 
@@ -33,10 +35,14 @@ interface ProjectFile {
 }
 
 const App: React.FC = () => {
-  const dispatch = useDispatch();
+  const dispatch = useDispatch<AppDispatch>();
 
   // Initialize background preview renderer
   const { forceRender } = usePreviewRenderer();
+
+  // Undo/redo state
+  const canUndo = useSelector(selectCanUndo);
+  const canRedo = useSelector(selectCanRedo);
 
   const project = useSelector((state: RootState) => state.project);
   const timeline = useSelector((state: RootState) => state.timeline);
@@ -152,6 +158,9 @@ const App: React.FC = () => {
       const content = await window.electronAPI.file.readText(filePath);
       const projectFile: ProjectFile = JSON.parse(content);
 
+      // Clear history for fresh project
+      dispatch(clearHistory());
+
       // Load the timeline first
       dispatch(loadTimeline(projectFile.timeline));
 
@@ -229,6 +238,24 @@ const App: React.FC = () => {
     setShowExportDialog(true);
   }, []);
 
+  // Undo (Ctrl+Z)
+  const handleUndo = useCallback(() => {
+    if (canUndo) {
+      dispatch(performUndo());
+      setStatusMessage('Undo');
+      setTimeout(() => setStatusMessage('Ready'), 1000);
+    }
+  }, [dispatch, canUndo]);
+
+  // Redo (Ctrl+Shift+Z or Ctrl+Y)
+  const handleRedo = useCallback(() => {
+    if (canRedo) {
+      dispatch(performRedo());
+      setStatusMessage('Redo');
+      setTimeout(() => setStatusMessage('Ready'), 1000);
+    }
+  }, [dispatch, canRedo]);
+
   // Initialize default tracks
   useEffect(() => {
     if (!tracksInitialized.current && tracks.length === 0) {
@@ -278,13 +305,8 @@ const App: React.FC = () => {
         mediaBinRef.current?.triggerImport();
       }),
       window.electronAPI.menu.onExport(handleExport),
-      // TODO: Connect undo/redo to Redux history
-      window.electronAPI.menu.onUndo(() => {
-        setStatusMessage('Undo (not implemented yet)');
-      }),
-      window.electronAPI.menu.onRedo(() => {
-        setStatusMessage('Redo (not implemented yet)');
-      }),
+      window.electronAPI.menu.onUndo(handleUndo),
+      window.electronAPI.menu.onRedo(handleRedo),
       window.electronAPI.menu.onResetLayout(handleResetLayout),
       window.electronAPI.menu.onRegeneratePreview(() => {
         forceRender();
@@ -304,7 +326,7 @@ const App: React.FC = () => {
     ];
 
     return () => cleanups.forEach(cleanup => cleanup());
-  }, [handleOpen, handleSave, handleSaveAs, handleExport, loadProjectFromPath, handleResetLayout, forceRender]);
+  }, [handleOpen, handleSave, handleSaveAs, handleExport, handleUndo, handleRedo, loadProjectFromPath, handleResetLayout, forceRender]);
 
   // Handle unsaved changes check when closing
   useEffect(() => {
@@ -394,11 +416,23 @@ const App: React.FC = () => {
         e.preventDefault();
         handleExport();
       }
+
+      // Ctrl+Z - Undo
+      if (ctrl && !e.shiftKey && e.key === 'z') {
+        e.preventDefault();
+        handleUndo();
+      }
+
+      // Ctrl+Shift+Z or Ctrl+Y - Redo
+      if ((ctrl && e.shiftKey && e.key === 'Z') || (ctrl && e.key === 'y')) {
+        e.preventDefault();
+        handleRedo();
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleSave, handleSaveAs, handleOpen, handleExport]);
+  }, [handleSave, handleSaveAs, handleOpen, handleExport, handleUndo, handleRedo]);
 
   // Horizontal resizer (between top and bottom rows)
   const handleHorizontalResize = useCallback((e: React.MouseEvent) => {

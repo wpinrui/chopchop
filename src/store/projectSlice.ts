@@ -101,6 +101,12 @@ const projectSlice = createSlice({
       return { ...action.payload, dirty: false };
     },
 
+    // Set media array directly (for undo/redo)
+    setMedia: (state, action: PayloadAction<MediaItem[]>) => {
+      state.media = action.payload;
+      state.dirty = true;
+    },
+
     resetProject: () => {
       return initialState;
     },
@@ -119,6 +125,7 @@ export const {
   updateMediaItem,
   setMediaProxy,
   loadProject,
+  setMedia,
   resetProject,
 } = projectSlice.actions;
 
