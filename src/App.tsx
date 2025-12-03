@@ -16,7 +16,7 @@ import PreviewPipelineIndicator from './components/PreviewPipelineIndicator/Prev
 import { usePreviewRenderer } from './hooks/usePreviewRenderer';
 import { addTrack, loadTimeline } from './store/timelineSlice';
 import { setActivePane } from './store/uiSlice';
-import { loadProject, setProjectPath, markClean, updateMediaItem, clearAllProxies } from './store/projectSlice';
+import { loadProject, setProjectPath, setProjectName, markClean, updateMediaItemSilent, clearAllProxies } from './store/projectSlice';
 import { performUndo, performRedo, selectCanUndo, selectCanRedo, clearHistory } from './store/historySlice';
 import type { AppDispatch } from './store';
 import type { Project, Timeline as TimelineType, MediaItem } from '@types';
@@ -91,10 +91,20 @@ const App: React.FC = () => {
     try {
       setStatusMessage('Saving...');
 
+      // Derive project name from filename (without extension)
+      const fileName = filePath.split(/[\\/]/).pop() || 'Untitled';
+      const derivedName = fileName.replace(/\.chpchp$/i, '');
+
+      // Update project name if it was still "Untitled"
+      const finalName = project.name === 'Untitled' ? derivedName : project.name;
+      if (finalName !== project.name) {
+        dispatch(setProjectName(finalName));
+      }
+
       // Build project file data (exclude thumbnails and waveforms - they'll be regenerated)
       const projectFile: ProjectFile = {
         version: project.version,
-        name: project.name,
+        name: finalName,
         settings: project.settings,
         media: projectMedia.map(m => ({
           id: m.id,
@@ -159,6 +169,13 @@ const App: React.FC = () => {
       const content = await window.electronAPI.file.readText(filePath);
       const projectFile: ProjectFile = JSON.parse(content);
 
+      // Derive project name from filename if stored name is "Untitled"
+      let projectName = projectFile.name;
+      if (projectName === 'Untitled') {
+        const fileName = filePath.split(/[\\/]/).pop() || 'Untitled';
+        projectName = fileName.replace(/\.chpchp$/i, '');
+      }
+
       // Clear history for fresh project
       dispatch(clearHistory());
 
@@ -178,7 +195,7 @@ const App: React.FC = () => {
       // Load project state
       dispatch(loadProject({
         version: projectFile.version,
-        name: projectFile.name,
+        name: projectName,
         path: filePath,
         dirty: false,
         settings: projectFile.settings,
@@ -192,13 +209,13 @@ const App: React.FC = () => {
 
       setStatusMessage('Regenerating thumbnails...');
 
-      // Regenerate thumbnails and waveforms asynchronously
+      // Regenerate thumbnails and waveforms asynchronously (silent - don't mark dirty)
       for (const mediaItem of mediaItems) {
         try {
           // Regenerate thumbnail
           const probeResult = await window.electronAPI.media.probe(mediaItem.path);
           if (probeResult?.thumbnailDataUrl) {
-            dispatch(updateMediaItem({
+            dispatch(updateMediaItemSilent({
               id: mediaItem.id,
               updates: { thumbnailPath: probeResult.thumbnailDataUrl },
             }));
@@ -208,7 +225,7 @@ const App: React.FC = () => {
           if (mediaItem.type !== 'image') {
             const waveformData = await window.electronAPI.media.generateWaveform(mediaItem.path);
             if (waveformData) {
-              dispatch(updateMediaItem({
+              dispatch(updateMediaItemSilent({
                 id: mediaItem.id,
                 updates: { waveformData },
               }));
@@ -218,8 +235,6 @@ const App: React.FC = () => {
           console.warn(`Failed to regenerate data for ${mediaItem.name}:`, err);
         }
       }
-
-      dispatch(markClean()); // Mark clean after regeneration
       setStatusMessage('Project loaded');
       setTimeout(() => setStatusMessage('Ready'), 2000);
       return true;
@@ -260,7 +275,7 @@ const App: React.FC = () => {
     }
   }, [dispatch, canRedo]);
 
-  // Check and cleanup missing proxy files
+  // Check and cleanup missing proxy files (silent - don't mark dirty)
   useEffect(() => {
     const cleanupMissingProxies = async () => {
       let cleanedCount = 0;
@@ -269,15 +284,14 @@ const App: React.FC = () => {
           checkedProxiesRef.current.add(item.proxyPath);
           try {
             const exists = await window.electronAPI.file.exists(item.proxyPath);
-            console.log(`[App] Checking proxy: ${item.proxyPath} - exists: ${exists}`);
             if (!exists) {
-              dispatch(updateMediaItem({ id: item.id, updates: { proxyPath: null } }));
+              dispatch(updateMediaItemSilent({ id: item.id, updates: { proxyPath: null } }));
               cleanedCount++;
             }
           } catch (err) {
             console.error(`[App] Error checking proxy ${item.proxyPath}:`, err);
             // If check fails, clear the proxy path to be safe
-            dispatch(updateMediaItem({ id: item.id, updates: { proxyPath: null } }));
+            dispatch(updateMediaItemSilent({ id: item.id, updates: { proxyPath: null } }));
             cleanedCount++;
           }
         }

@@ -66,6 +66,7 @@ const SKIP_ACTIONS = new Set([
 
   // Media updates that don't affect timeline (waveforms, proxies, thumbnails)
   'project/updateMediaItem',
+  'project/updateMediaItemSilent',
   'project/setMediaProxy',
 ]);
 

@@ -84,6 +84,18 @@ const projectSlice = createSlice({
       }
     },
 
+    // Update media item without marking project dirty
+    // Use for transient data: thumbnails, waveforms, clearing missing proxies
+    updateMediaItemSilent: (
+      state,
+      action: PayloadAction<{ id: string; updates: Partial<MediaItem> }>
+    ) => {
+      const item = state.media.find((m) => m.id === action.payload.id);
+      if (item) {
+        Object.assign(item, action.payload.updates);
+      }
+    },
+
     // Convenience action for setting proxy path on a media item
     setMediaProxy: (
       state,
@@ -130,6 +142,7 @@ export const {
   addMediaItem,
   removeMediaItem,
   updateMediaItem,
+  updateMediaItemSilent,
   setMediaProxy,
   clearAllProxies,
   loadProject,

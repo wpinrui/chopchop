@@ -242,10 +242,13 @@ export class ChunkCache {
 
   /**
    * Compute a hash for the entire project (for quick identification)
+   * For unsaved projects, use a stable identifier so cache can be reused across sessions
    */
   private computeProjectHash(projectPath: string | null): string {
     if (!projectPath) {
-      return 'unsaved-' + Date.now();
+      // Use a stable identifier for unsaved projects
+      // The actual content validation happens via chunk content hashes
+      return 'unsaved-project';
     }
     return crypto.createHash('md5').update(projectPath).digest('hex').slice(0, 16);
   }
