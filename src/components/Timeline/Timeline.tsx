@@ -22,6 +22,7 @@ const Timeline: React.FC = () => {
   const fps = useSelector((state: RootState) => state.project.settings.frameRate);
   const media = useSelector((state: RootState) => state.project.media);
   const selectedClipIds = useSelector((state: RootState) => state.ui.selectedClipIds);
+  const activePane = useSelector((state: RootState) => state.ui.activePane);
   const sequenceInitialized = useSelector((state: RootState) => state.project.settings.sequenceInitialized);
 
   const timelineRef = useRef<HTMLDivElement>(null);
@@ -643,6 +644,9 @@ const Timeline: React.FC = () => {
       // Don't handle if typing in an input
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
+      // Only handle delete if timeline is the active pane
+      if (activePane !== 'timeline') return;
+
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (selectedClipIds.length > 0) {
           e.preventDefault();
@@ -657,7 +661,7 @@ const Timeline: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [dispatch, selectedClipIds]);
+  }, [dispatch, selectedClipIds, activePane]);
 
   // Zoom with centering on playhead (if visible)
   const zoomWithPlayheadCenter = useCallback((newZoom: number) => {
