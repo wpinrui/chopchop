@@ -921,6 +921,15 @@ function registerIPCHandlers() {
     return engine.getCacheStats();
   });
 
+  // Prefetch frames for smoother playback
+  ipcMain.handle('preview:prefetchFrames', async (
+    _event,
+    { time, count, direction }: { time: number; count?: number; direction?: -1 | 1 }
+  ) => {
+    const engine = getPreviewEngine();
+    engine.prefetchFrames(time, count ?? 5, direction ?? 1);
+  });
+
   // Get current chunks status
   ipcMain.handle('preview:getChunks', async () => {
     const engine = getPreviewEngine();

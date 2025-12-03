@@ -215,6 +215,13 @@ export class PreviewEngine {
   }
 
   /**
+   * Prefetch frames around a time for smoother playback
+   */
+  prefetchFrames(centerTime: number, count: number = 5, direction: -1 | 1 = 1): void {
+    this.frameExtractor.prefetchFrames(centerTime, count, direction);
+  }
+
+  /**
    * Start scrub mode
    */
   startScrub(time: number): void {

@@ -27,6 +27,17 @@ interface CachedFrame {
   timestamp: number;
 }
 
+// Extraction request with priority
+interface ExtractionRequest {
+  time: number;
+  priority: 'high' | 'normal' | 'low';
+  resolve: (frame: ExtractedFrame | null) => void;
+  process?: ChildProcess;
+  cancelled?: boolean;
+}
+
+const MAX_CONCURRENT_EXTRACTIONS = 3;
+
 export class FrameExtractor {
   private frameCache: Map<string, CachedFrame> = new Map();
   private maxCacheSize: number;
@@ -34,6 +45,12 @@ export class FrameExtractor {
   private timeline: Timeline | null = null;
   private media: MediaItem[] = [];
   private settings: ProjectSettings | null = null;
+  private frameRate: number = 30; // Default, updated on initialize
+
+  // Extraction queue for smarter scrub handling
+  private extractionQueue: ExtractionRequest[] = [];
+  private activeExtractions: ExtractionRequest[] = [];
+  private lastCompletedFrame: ExtractedFrame | null = null;
 
   constructor(maxCacheSize: number = 30) {
     this.maxCacheSize = maxCacheSize;
@@ -57,6 +74,7 @@ export class FrameExtractor {
     this.timeline = timeline;
     this.media = media;
     this.settings = settings;
+    this.frameRate = settings.frameRate;
     // Don't clear cache on re-init - frames may still be valid
   }
 
@@ -64,15 +82,13 @@ export class FrameExtractor {
    * Invalidate cached frames in a time range
    */
   invalidateRange(startTime: number, endTime: number): void {
-    const keysToDelete: string[] = [];
+    // Convert time range to frame range
+    const startFrame = Math.floor(startTime * this.frameRate);
+    const endFrame = Math.ceil(endTime * this.frameRate);
 
-    for (const [key, cached] of this.frameCache) {
-      if (cached.time >= startTime && cached.time <= endTime) {
-        keysToDelete.push(key);
-      }
-    }
-
-    for (const key of keysToDelete) {
+    // Delete all frames in this range
+    for (let frame = startFrame; frame <= endFrame; frame++) {
+      const key = `frame-${frame}`;
       this.frameCache.delete(key);
     }
   }
@@ -86,8 +102,9 @@ export class FrameExtractor {
 
   /**
    * Extract a frame at the given timeline time
+   * Uses priority queue to avoid cancelling useful in-flight extractions
    */
-  async extractFrame(time: number): Promise<ExtractedFrame | null> {
+  async extractFrame(time: number, priority: 'high' | 'normal' | 'low' = 'high'): Promise<ExtractedFrame | null> {
     if (!this.timeline || !this.settings) {
       console.error('[FrameExtractor] Not initialized');
       return null;
@@ -100,39 +117,164 @@ export class FrameExtractor {
       return cached.frame;
     }
 
-    // Cancel any ongoing extraction
-    this.cancelExtraction();
-
-    // Determine if this is a simple or complex frame
-    const complexity = isTimePointComplex(this.timeline, time);
-
-    let frame: ExtractedFrame | null;
-
-    if (complexity.isComplex) {
-      // Multiple clips or effects - need compositing
-      frame = await this.extractCompositeFrame(time);
-    } else {
-      // Single clip - direct extraction
-      frame = await this.extractSingleFrame(time);
+    // Check if already being extracted
+    const existingRequest = this.activeExtractions.find(
+      (r) => this.getCacheKey(r.time) === cacheKey
+    );
+    if (existingRequest) {
+      // Wait for existing extraction by creating a promise that resolves with the cached result
+      return new Promise((resolve) => {
+        const checkInterval = setInterval(() => {
+          const cached = this.frameCache.get(cacheKey);
+          if (cached) {
+            clearInterval(checkInterval);
+            resolve(cached.frame);
+          }
+        }, 16);
+        // Timeout after 500ms
+        setTimeout(() => {
+          clearInterval(checkInterval);
+          resolve(this.lastCompletedFrame);
+        }, 500);
+      });
     }
 
-    if (frame) {
-      this.addToCache(cacheKey, time, frame);
-    }
+    // Create extraction request
+    return new Promise((resolve) => {
+      const request: ExtractionRequest = {
+        time,
+        priority,
+        resolve,
+      };
 
-    return frame;
+      // If we have room, start immediately
+      if (this.activeExtractions.length < MAX_CONCURRENT_EXTRACTIONS) {
+        this.startExtraction(request);
+      } else {
+        // Queue is full - cancel lowest priority if this is higher priority
+        const lowestPriority = this.findLowestPriorityActive();
+        if (lowestPriority && this.isPriorityHigher(priority, lowestPriority.priority)) {
+          this.cancelRequest(lowestPriority);
+          this.startExtraction(request);
+        } else {
+          // Add to queue, will be processed when slot opens
+          this.extractionQueue.push(request);
+          // Also resolve with last completed frame to show something immediately
+          if (this.lastCompletedFrame) {
+            // Don't resolve yet - wait for actual extraction
+          }
+        }
+      }
+    });
   }
 
   /**
-   * Extract frame from a single source file
+   * Start an extraction request
    */
-  private async extractSingleFrame(time: number): Promise<ExtractedFrame | null> {
+  private async startExtraction(request: ExtractionRequest): Promise<void> {
+    this.activeExtractions.push(request);
+
+    const complexity = isTimePointComplex(this.timeline!, request.time);
+    let frame: ExtractedFrame | null;
+
+    if (complexity.isComplex) {
+      frame = await this.extractCompositeFrameWithRequest(request);
+    } else {
+      frame = await this.extractSingleFrameWithRequest(request);
+    }
+
+    // Remove from active
+    const idx = this.activeExtractions.indexOf(request);
+    if (idx !== -1) {
+      this.activeExtractions.splice(idx, 1);
+    }
+
+    // If cancelled, don't cache or resolve
+    if (request.cancelled) {
+      request.resolve(this.lastCompletedFrame);
+      this.processQueue();
+      return;
+    }
+
+    // Cache and resolve
+    if (frame) {
+      const cacheKey = this.getCacheKey(request.time);
+      this.addToCache(cacheKey, request.time, frame);
+      this.lastCompletedFrame = frame;
+    }
+
+    request.resolve(frame);
+
+    // Process next in queue
+    this.processQueue();
+  }
+
+  /**
+   * Process the next item in the extraction queue
+   */
+  private processQueue(): void {
+    if (this.extractionQueue.length === 0) return;
+    if (this.activeExtractions.length >= MAX_CONCURRENT_EXTRACTIONS) return;
+
+    // Sort by priority and get highest
+    this.extractionQueue.sort((a, b) => {
+      const priorityOrder = { high: 0, normal: 1, low: 2 };
+      return priorityOrder[a.priority] - priorityOrder[b.priority];
+    });
+
+    const next = this.extractionQueue.shift();
+    if (next) {
+      this.startExtraction(next);
+    }
+  }
+
+  /**
+   * Find the lowest priority active extraction
+   */
+  private findLowestPriorityActive(): ExtractionRequest | null {
+    if (this.activeExtractions.length === 0) return null;
+
+    const priorityOrder = { high: 0, normal: 1, low: 2 };
+    return this.activeExtractions.reduce((lowest, current) =>
+      priorityOrder[current.priority] > priorityOrder[lowest.priority] ? current : lowest
+    );
+  }
+
+  /**
+   * Check if priority a is higher than priority b
+   */
+  private isPriorityHigher(a: 'high' | 'normal' | 'low', b: 'high' | 'normal' | 'low'): boolean {
+    const priorityOrder = { high: 0, normal: 1, low: 2 };
+    return priorityOrder[a] < priorityOrder[b];
+  }
+
+  /**
+   * Cancel a specific extraction request
+   */
+  private cancelRequest(request: ExtractionRequest): void {
+    request.cancelled = true;
+    if (request.process) {
+      request.process.kill('SIGTERM');
+    }
+  }
+
+  /**
+   * Get the most recently completed frame (for immediate display during extraction)
+   */
+  getLastCompletedFrame(): ExtractedFrame | null {
+    return this.lastCompletedFrame;
+  }
+
+  /**
+   * Extract frame from a single source file (with request tracking for cancellation)
+   */
+  private async extractSingleFrameWithRequest(request: ExtractionRequest): Promise<ExtractedFrame | null> {
     if (!this.timeline || !this.settings) return null;
 
+    const time = request.time;
     const clipInfo = getSingleClipAtTime(this.timeline, time);
 
     if (!clipInfo) {
-      // No clip at this time - return black frame
       return this.generateBlackFrame();
     }
 
@@ -143,10 +285,7 @@ export class FrameExtractor {
       return this.generateBlackFrame();
     }
 
-    // Calculate the time within the source media
     const mediaTime = clip.mediaIn + (time - clip.timelineStart);
-
-    // Use source file for full quality (not proxy)
     const sourcePath = mediaItem.path;
     const [width, height] = this.settings.resolution;
 
@@ -162,37 +301,37 @@ export class FrameExtractor {
       ];
 
       const ffmpegPath = this.getFFmpegPath();
-      const process = spawn(ffmpegPath, args);
-      this.activeProcess = process;
+      const proc = spawn(ffmpegPath, args);
+      request.process = proc;
+      this.activeProcess = proc;
 
       const chunks: Buffer[] = [];
 
-      process.stdout?.on('data', (data: Buffer) => {
+      proc.stdout?.on('data', (data: Buffer) => {
         chunks.push(data);
       });
 
-      process.stderr?.on('data', (data) => {
-        // Suppress stderr unless debugging
-        // console.log('[FrameExtractor]', data.toString());
+      proc.stderr?.on('data', () => {
+        // Suppress stderr
       });
 
-      process.on('error', (error) => {
+      proc.on('error', (error) => {
         console.error('[FrameExtractor] Process error:', error);
         this.activeProcess = null;
         resolve(null);
       });
 
-      process.on('close', (code) => {
+      proc.on('close', (code) => {
         this.activeProcess = null;
+
+        if (request.cancelled) {
+          resolve(null);
+          return;
+        }
 
         if (code === 0 && chunks.length > 0) {
           const data = Buffer.concat(chunks);
-          resolve({
-            time,
-            width,
-            height,
-            data,
-          });
+          resolve({ time, width, height, data });
         } else {
           resolve(null);
         }
@@ -201,33 +340,27 @@ export class FrameExtractor {
   }
 
   /**
-   * Extract and composite frame from multiple clips
+   * Extract and composite frame from multiple clips (with request tracking)
    */
-  private async extractCompositeFrame(time: number): Promise<ExtractedFrame | null> {
+  private async extractCompositeFrameWithRequest(request: ExtractionRequest): Promise<ExtractedFrame | null> {
     if (!this.timeline || !this.settings) return null;
 
+    const time = request.time;
     const [width, height] = this.settings.resolution;
-
-    // Gather all clips at this time
     const clipsAtTime = this.getClipsAtTime(time);
 
     if (clipsAtTime.length === 0) {
       return this.generateBlackFrame();
     }
 
-    // Build ffmpeg command with filter_complex for compositing
     const inputs: string[] = [];
     const filterParts: string[] = [];
 
-    // Add inputs
     for (let i = 0; i < clipsAtTime.length; i++) {
       const { media, mediaTime } = clipsAtTime[i];
-      // Use source file for full quality
       inputs.push('-ss', String(mediaTime), '-i', media.path);
     }
 
-    // Build filter graph
-    // Create black base
     filterParts.push(`color=c=black:s=${width}x${height}:d=0.04[base]`);
 
     let currentBase = 'base';
@@ -235,14 +368,12 @@ export class FrameExtractor {
       const clipLabel = `clip${i}`;
       const outputLabel = i === clipsAtTime.length - 1 ? 'out' : `comp${i}`;
 
-      // Maintain original dimensions (pad if smaller, crop if larger, centered)
       filterParts.push(
         `[${i}:v]pad=w=max(${width}\\,iw):h=max(${height}\\,ih):x=(ow-iw)/2:y=(oh-ih)/2:color=black,` +
         `crop=${width}:${height}:(iw-${width})/2:(ih-${height})/2,` +
         `format=yuva420p[${clipLabel}]`
       );
 
-      // Overlay onto base
       filterParts.push(
         `[${currentBase}][${clipLabel}]overlay=format=auto[${outputLabel}]`
       );
@@ -250,9 +381,7 @@ export class FrameExtractor {
       currentBase = outputLabel;
     }
 
-    // Convert to RGBA for output
     filterParts.push(`[out]format=rgba[final]`);
-
     const filterComplex = filterParts.join(';');
 
     return new Promise((resolve) => {
@@ -267,36 +396,37 @@ export class FrameExtractor {
       ];
 
       const ffmpegPath = this.getFFmpegPath();
-      const process = spawn(ffmpegPath, args);
-      this.activeProcess = process;
+      const proc = spawn(ffmpegPath, args);
+      request.process = proc;
+      this.activeProcess = proc;
 
       const chunks: Buffer[] = [];
 
-      process.stdout?.on('data', (data: Buffer) => {
+      proc.stdout?.on('data', (data: Buffer) => {
         chunks.push(data);
       });
 
-      process.stderr?.on('data', () => {
+      proc.stderr?.on('data', () => {
         // Suppress stderr
       });
 
-      process.on('error', (error) => {
+      proc.on('error', (error) => {
         console.error('[FrameExtractor] Composite error:', error);
         this.activeProcess = null;
         resolve(null);
       });
 
-      process.on('close', (code) => {
+      proc.on('close', (code) => {
         this.activeProcess = null;
+
+        if (request.cancelled) {
+          resolve(null);
+          return;
+        }
 
         if (code === 0 && chunks.length > 0) {
           const data = Buffer.concat(chunks);
-          resolve({
-            time,
-            width,
-            height,
-            data,
-          });
+          resolve({ time, width, height, data });
         } else {
           resolve(null);
         }
@@ -369,9 +499,25 @@ export class FrameExtractor {
   }
 
   /**
-   * Cancel ongoing extraction
+   * Cancel all ongoing extractions and clear the queue
    */
   cancelExtraction(): void {
+    // Cancel all active extractions
+    for (const request of this.activeExtractions) {
+      request.cancelled = true;
+      if (request.process) {
+        request.process.kill('SIGTERM');
+      }
+    }
+    this.activeExtractions = [];
+
+    // Clear the queue (resolve with null)
+    for (const request of this.extractionQueue) {
+      request.resolve(this.lastCompletedFrame);
+    }
+    this.extractionQueue = [];
+
+    // Legacy single process cleanup
     if (this.activeProcess) {
       this.activeProcess.kill('SIGTERM');
       this.activeProcess = null;
@@ -380,10 +526,12 @@ export class FrameExtractor {
 
   /**
    * Get cache key for a time
+   * Uses frame number to avoid duplicate cache entries for the same visual frame
    */
   private getCacheKey(time: number): string {
-    // Round to nearest millisecond for cache key
-    return `frame-${Math.round(time * 1000)}`;
+    // Round to nearest frame to avoid duplicate entries for same visual frame
+    const frameNumber = Math.round(time * this.frameRate);
+    return `frame-${frameNumber}`;
   }
 
   /**
@@ -417,30 +565,44 @@ export class FrameExtractor {
   }
 
   /**
-   * Prefetch frames around a time for smoother scrubbing
+   * Prefetch frames around a time for smoother scrubbing/reverse playback
+   * Uses low priority so it doesn't block current frame extraction
    */
-  async prefetchFrames(centerTime: number, count: number = 5): Promise<void> {
+  async prefetchFrames(centerTime: number, count: number = 5, direction: -1 | 1 = 1): Promise<void> {
     if (!this.settings) return;
 
-    const frameInterval = 1 / this.settings.frameRate;
+    const frameInterval = 1 / this.frameRate;
     const times: number[] = [];
 
-    // Prefetch frames before and after
-    for (let i = -count; i <= count; i++) {
-      if (i === 0) continue; // Skip center, already extracting that
-      const t = centerTime + i * frameInterval;
-      if (t >= 0) {
-        times.push(t);
+    // Prefetch frames in the given direction (or both if direction not specified)
+    if (direction === 1) {
+      // Forward - prefetch ahead
+      for (let i = 1; i <= count; i++) {
+        const t = centerTime + i * frameInterval;
+        if (t >= 0) times.push(t);
+      }
+    } else {
+      // Backward - prefetch behind
+      for (let i = 1; i <= count; i++) {
+        const t = centerTime - i * frameInterval;
+        if (t >= 0) times.push(t);
       }
     }
 
-    // Extract in parallel (but don't wait for all)
+    // Queue extraction with low priority
     for (const t of times) {
       const cacheKey = this.getCacheKey(t);
       if (!this.frameCache.has(cacheKey)) {
-        // Fire and forget - don't await
-        this.extractFrame(t).catch(() => {});
+        // Use low priority so current frame takes precedence
+        this.extractFrame(t, 'low').catch(() => {});
       }
     }
+  }
+
+  /**
+   * Get the number of frames currently cached
+   */
+  getCacheSize(): number {
+    return this.frameCache.size;
   }
 }

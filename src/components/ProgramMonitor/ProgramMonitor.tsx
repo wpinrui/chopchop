@@ -90,6 +90,16 @@ const ProgramMonitor: React.FC = () => {
   const [playbackSpeed, setPlaybackSpeed] = useState(1); // Current speed magnitude
   const [playbackDirection, setPlaybackDirection] = useState<-1 | 0 | 1>(0); // -1 = backward, 0 = paused, 1 = forward
 
+  // Source playback mode - for playing directly from source files
+  const [sourcePlaybackInfo, setSourcePlaybackInfo] = useState<{
+    enabled: boolean;
+    mediaPath: string;
+    clipStart: number; // Timeline start of current clip
+    clipEnd: number; // Timeline end of current clip
+    mediaOffset: number; // Offset into the source file
+  } | null>(null);
+  const sourceVideoRef = useRef<HTMLVideoElement>(null);
+
   // Hybrid preview system
   const [previewState, previewActions] = useHybridPreview();
   const renderFrame = useFrameRenderer(canvasRef);
@@ -187,38 +197,96 @@ const ProgramMonitor: React.FC = () => {
     }
   }, [playheadPosition, isPlaying, isScrubbing, previewState.isInitialized, extractAndRenderFrame]);
 
-  // Play handler
-  const handlePlay = useCallback((speed: number = 1) => {
-    if (!previewReady) {
-      setShowLoadingDialog(true);
-      return;
-    }
-
-    const video = videoRef.current;
-    if (!video) return;
-
+  // Play handler - supports progressive playback from source
+  const handlePlay = useCallback(async (speed: number = 1) => {
     // Wrap around to start if playhead is at or beyond timeline duration
     const startTime = playheadPosition >= timelineDuration ? 0 : playheadPosition;
     if (startTime !== playheadPosition) {
       dispatch(setPlayheadPosition(startTime));
     }
 
-    setIsPlaying(true);
-    setDisplayMode('video');
-    setPlaybackDirection(1);
-    setPlaybackSpeed(speed);
-    dispatch(setPlayingPane('program'));
+    // Check if we can play directly from source (simple segment)
+    const playbackInfo = await previewActions.getPlaybackInfo(startTime);
+    const clipInfo = await previewActions.getClipAtTime(startTime);
 
-    video.playbackRate = speed;
-    video.currentTime = startTime;
-    video.play();
-  }, [previewReady, playheadPosition, timelineDuration, dispatch]);
+    // If this is a simple segment and we have a clip, play from source
+    if (!playbackInfo.isComplex && clipInfo?.hasClip && clipInfo.mediaPath) {
+      const sourceVideo = sourceVideoRef.current;
+      if (sourceVideo) {
+        // Find the clip boundaries for monitoring when to switch
+        const clip = tracks.flatMap(t => t.clips).find(c => {
+          const clipStart = c.timelineStart;
+          const clipEnd = c.timelineStart + c.duration;
+          return startTime >= clipStart && startTime < clipEnd;
+        });
+
+        if (clip) {
+          setSourcePlaybackInfo({
+            enabled: true,
+            mediaPath: clipInfo.mediaPath,
+            clipStart: clip.timelineStart,
+            clipEnd: clip.timelineStart + clip.duration,
+            mediaOffset: clip.mediaIn - clip.timelineStart,
+          });
+
+          setIsPlaying(true);
+          setDisplayMode('video');
+          setPlaybackDirection(1);
+          setPlaybackSpeed(speed);
+          dispatch(setPlayingPane('program'));
+
+          // Set source and seek to correct position
+          const srcUrl = `file:///${clipInfo.mediaPath.replace(/\\/g, '/')}`;
+          if (sourceVideo.src !== srcUrl) {
+            sourceVideo.src = srcUrl;
+            await new Promise<void>((resolve) => {
+              sourceVideo.onloadedmetadata = () => resolve();
+              sourceVideo.onerror = () => resolve();
+            });
+          }
+
+          sourceVideo.playbackRate = speed;
+          sourceVideo.currentTime = clipInfo.mediaTime;
+          sourceVideo.muted = isMuted;
+          sourceVideo.play();
+          return;
+        }
+      }
+    }
+
+    // Fall back to pre-rendered preview if available
+    if (previewReady) {
+      const video = videoRef.current;
+      if (!video) return;
+
+      setSourcePlaybackInfo(null);
+      setIsPlaying(true);
+      setDisplayMode('video');
+      setPlaybackDirection(1);
+      setPlaybackSpeed(speed);
+      dispatch(setPlayingPane('program'));
+
+      video.playbackRate = speed;
+      video.currentTime = startTime;
+      video.play();
+      return;
+    }
+
+    // No source clip and no preview ready - show loading dialog
+    setShowLoadingDialog(true);
+  }, [previewReady, playheadPosition, timelineDuration, dispatch, previewActions, tracks, isMuted]);
 
   // Pause handler
   const handlePause = useCallback(async () => {
+    // Pause both video elements
     const video = videoRef.current;
+    const sourceVideo = sourceVideoRef.current;
+
     if (video) {
       video.pause();
+    }
+    if (sourceVideo) {
+      sourceVideo.pause();
     }
 
     setIsPlaying(false);
@@ -227,15 +295,26 @@ const ProgramMonitor: React.FC = () => {
     dispatch(setPlayingPane(null));
 
     // Extract frame at pause position for full quality display
-    // When coming from reverse playback, use playheadPosition (video.currentTime is stale)
-    // When coming from forward playback, use video.currentTime (more accurate)
-    const currentTime = playbackDirection === -1
-      ? playheadPosition
-      : (video?.currentTime ?? playheadPosition);
+    // Determine current time based on which playback mode we're in
+    let currentTime: number;
+    if (playbackDirection === -1) {
+      // Reverse playback - use playheadPosition
+      currentTime = playheadPosition;
+    } else if (sourcePlaybackInfo?.enabled && sourceVideo) {
+      // Source playback - calculate timeline time from source video
+      currentTime = sourceVideo.currentTime - sourcePlaybackInfo.mediaOffset;
+    } else if (video) {
+      // Preview playback
+      currentTime = video.currentTime;
+    } else {
+      currentTime = playheadPosition;
+    }
+
+    setSourcePlaybackInfo(null);
     dispatch(setPlayheadPosition(currentTime));
     lastExtractedTimeRef.current = currentTime;
     await extractAndRenderFrame(currentTime);
-  }, [dispatch, playheadPosition, extractAndRenderFrame, playbackDirection]);
+  }, [dispatch, playheadPosition, extractAndRenderFrame, playbackDirection, sourcePlaybackInfo]);
 
   // Toggle play/pause
   const handlePlayPause = useCallback(() => {
@@ -395,24 +474,27 @@ const ProgramMonitor: React.FC = () => {
     };
   }, [isScrubbing, getTimeFromMouseX, previewActions, renderFrame, dispatch, extractAndRenderFrame]);
 
-  // Video timeupdate handler - sync to Redux during playback
+  // Video timeupdate handler - sync to Redux during playback (preview video)
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
 
     const handleTimeUpdate = () => {
-      if (isPlaying) {
+      // Only sync if we're playing from preview (not source)
+      if (isPlaying && !sourcePlaybackInfo?.enabled) {
         dispatch(setPlayheadPosition(video.currentTime));
       }
     };
 
     const handleEnded = () => {
-      setIsPlaying(false);
-      setDisplayMode('canvas');
-      dispatch(setPlayingPane(null));
-      dispatch(setPlayheadPosition(timelineDuration));
-      lastExtractedTimeRef.current = timelineDuration;
-      extractAndRenderFrame(timelineDuration);
+      if (!sourcePlaybackInfo?.enabled) {
+        setIsPlaying(false);
+        setDisplayMode('canvas');
+        dispatch(setPlayingPane(null));
+        dispatch(setPlayheadPosition(timelineDuration));
+        lastExtractedTimeRef.current = timelineDuration;
+        extractAndRenderFrame(timelineDuration);
+      }
     };
 
     video.addEventListener('timeupdate', handleTimeUpdate);
@@ -422,12 +504,94 @@ const ProgramMonitor: React.FC = () => {
       video.removeEventListener('timeupdate', handleTimeUpdate);
       video.removeEventListener('ended', handleEnded);
     };
-  }, [isPlaying, timelineDuration, dispatch, extractAndRenderFrame]);
+  }, [isPlaying, timelineDuration, dispatch, extractAndRenderFrame, sourcePlaybackInfo?.enabled]);
+
+  // Source video timeupdate handler - sync to Redux and detect clip boundaries
+  useEffect(() => {
+    const sourceVideo = sourceVideoRef.current;
+    if (!sourceVideo || !sourcePlaybackInfo?.enabled) return;
+
+    const handleTimeUpdate = () => {
+      if (!isPlaying || !sourcePlaybackInfo) return;
+
+      // Calculate timeline time from source video time
+      const timelineTime = sourceVideo.currentTime - sourcePlaybackInfo.mediaOffset;
+      dispatch(setPlayheadPosition(timelineTime));
+
+      // Check if we've reached the end of the current clip
+      if (timelineTime >= sourcePlaybackInfo.clipEnd - 0.05) {
+        // Clip ended - check if there's another clip to play
+        handleClipBoundary(sourcePlaybackInfo.clipEnd);
+      }
+    };
+
+    const handleEnded = () => {
+      // Source file ended - pause playback
+      handlePause();
+    };
+
+    sourceVideo.addEventListener('timeupdate', handleTimeUpdate);
+    sourceVideo.addEventListener('ended', handleEnded);
+
+    return () => {
+      sourceVideo.removeEventListener('timeupdate', handleTimeUpdate);
+      sourceVideo.removeEventListener('ended', handleEnded);
+    };
+  }, [isPlaying, sourcePlaybackInfo, dispatch, handlePause]);
+
+  // Handle transition between clips during source playback
+  const handleClipBoundary = useCallback(async (boundaryTime: number) => {
+    // Check what's at the next position
+    const nextInfo = await previewActions.getPlaybackInfo(boundaryTime);
+    const nextClip = await previewActions.getClipAtTime(boundaryTime);
+
+    if (!nextInfo.isComplex && nextClip?.hasClip && nextClip.mediaPath) {
+      // Another simple clip - switch to it
+      const clip = tracks.flatMap(t => t.clips).find(c => {
+        const clipStart = c.timelineStart;
+        const clipEnd = c.timelineStart + c.duration;
+        return boundaryTime >= clipStart && boundaryTime < clipEnd;
+      });
+
+      if (clip) {
+        const sourceVideo = sourceVideoRef.current;
+        if (sourceVideo) {
+          setSourcePlaybackInfo({
+            enabled: true,
+            mediaPath: nextClip.mediaPath,
+            clipStart: clip.timelineStart,
+            clipEnd: clip.timelineStart + clip.duration,
+            mediaOffset: clip.mediaIn - clip.timelineStart,
+          });
+
+          const srcUrl = `file:///${nextClip.mediaPath.replace(/\\/g, '/')}`;
+          if (sourceVideo.src !== srcUrl) {
+            sourceVideo.src = srcUrl;
+            await new Promise<void>((resolve) => {
+              sourceVideo.onloadedmetadata = () => resolve();
+              sourceVideo.onerror = () => resolve();
+            });
+          }
+
+          sourceVideo.currentTime = nextClip.mediaTime;
+          sourceVideo.play();
+          return;
+        }
+      }
+    }
+
+    // No more simple clips or hit a complex segment - pause
+    handlePause();
+  }, [previewActions, tracks, handlePause]);
 
   // Handle reverse playback using requestAnimationFrame (HTML5 video doesn't support negative playbackRate)
   // Use refs to avoid effect restarting when callbacks change
   const reverseTimeRef = useRef(playheadPosition);
   const extractFrameRef = useRef(extractAndRenderFrame);
+  const prefetchFramesRef = useRef(previewActions.prefetchFrames);
+  const startScrubRef = useRef(previewActions.startScrub);
+  const updateScrubRef = useRef(previewActions.updateScrub);
+  const endScrubRef = useRef(previewActions.endScrub);
 
   useEffect(() => {
     reverseTimeRef.current = playheadPosition;
@@ -438,11 +602,26 @@ const ProgramMonitor: React.FC = () => {
   }, [extractAndRenderFrame]);
 
   useEffect(() => {
+    prefetchFramesRef.current = previewActions.prefetchFrames;
+  }, [previewActions.prefetchFrames]);
+
+  useEffect(() => {
+    startScrubRef.current = previewActions.startScrub;
+    updateScrubRef.current = previewActions.updateScrub;
+    endScrubRef.current = previewActions.endScrub;
+  }, [previewActions.startScrub, previewActions.updateScrub, previewActions.endScrub]);
+
+  useEffect(() => {
     if (playbackDirection !== -1) return;
 
     let animationId: number;
     let lastTime = performance.now();
+    let lastPrefetchTime = 0;
+    let lastAudioUpdateTime = 0;
     let cancelled = false;
+
+    // Start scrub audio for reverse playback
+    startScrubRef.current(reverseTimeRef.current);
 
     const updateReverse = async (now: number) => {
       if (cancelled) return;
@@ -460,6 +639,7 @@ const ProgramMonitor: React.FC = () => {
         setIsPlaying(false);
         setDisplayMode('canvas');
         dispatch(setPlayingPane(null));
+        endScrubRef.current();
         await extractFrameRef.current(0);
         return;
       }
@@ -467,6 +647,20 @@ const ProgramMonitor: React.FC = () => {
       reverseTimeRef.current = newTime;
       dispatch(setPlayheadPosition(newTime));
       lastExtractedTimeRef.current = newTime;
+
+      // Prefetch frames ahead (in reverse direction) every 100ms
+      if (now - lastPrefetchTime > 100) {
+        lastPrefetchTime = now;
+        prefetchFramesRef.current(newTime, 5, -1);
+      }
+
+      // Update scrub audio with negative velocity every 50ms
+      if (now - lastAudioUpdateTime > 50) {
+        lastAudioUpdateTime = now;
+        // Velocity is negative for reverse playback (time units per second)
+        updateScrubRef.current(newTime, -playbackSpeed);
+      }
+
       await extractFrameRef.current(newTime);
 
       if (!cancelled) {
@@ -474,10 +668,14 @@ const ProgramMonitor: React.FC = () => {
       }
     };
 
+    // Initial prefetch
+    prefetchFramesRef.current(reverseTimeRef.current, 10, -1);
+
     animationId = requestAnimationFrame(updateReverse);
 
     return () => {
       cancelled = true;
+      endScrubRef.current();
       if (animationId) {
         cancelAnimationFrame(animationId);
       }
@@ -551,26 +749,8 @@ const ProgramMonitor: React.FC = () => {
               video.playbackRate = PLAYBACK_SPEEDS[nextIndex];
             }
           } else {
-            // Was paused, start forward at first speed
-            if (!previewReady) {
-              setShowLoadingDialog(true);
-              return;
-            }
-            // Wrap around to start if playhead is at or beyond timeline duration
-            const startTime = playheadPosition >= timelineDuration ? 0 : playheadPosition;
-            if (startTime !== playheadPosition) {
-              dispatch(setPlayheadPosition(startTime));
-            }
-            setPlaybackSpeed(PLAYBACK_SPEEDS[0]);
-            setPlaybackDirection(1);
-            setDisplayMode('video');
-            setIsPlaying(true);
-            dispatch(setPlayingPane('program'));
-            if (video) {
-              video.playbackRate = PLAYBACK_SPEEDS[0];
-              video.currentTime = startTime;
-              video.play();
-            }
+            // Was paused, start forward at first speed - use progressive playback
+            handlePlay(PLAYBACK_SPEEDS[0]);
           }
           break;
 
@@ -601,6 +781,9 @@ const ProgramMonitor: React.FC = () => {
             if (videoRef.current) {
               videoRef.current.muted = !isMuted;
             }
+            if (sourceVideoRef.current) {
+              sourceVideoRef.current.muted = !isMuted;
+            }
           }
           break;
       }
@@ -620,8 +803,12 @@ const ProgramMonitor: React.FC = () => {
   // Toggle mute
   const toggleMute = useCallback(() => {
     const video = videoRef.current;
+    const sourceVideo = sourceVideoRef.current;
     if (video) {
       video.muted = !isMuted;
+    }
+    if (sourceVideo) {
+      sourceVideo.muted = !isMuted;
     }
     setIsMuted(!isMuted);
   }, [isMuted]);
@@ -660,7 +847,7 @@ const ProgramMonitor: React.FC = () => {
   return (
     <div className="program-monitor" onClick={handlePaneClick}>
       <div className="program-video-container" ref={containerRef}>
-        {/* Video element - for continuous playback (hardware accelerated) */}
+        {/* Preview video element - for pre-rendered preview playback */}
         {previewSrc && (
           <video
             key={previewSrc}
@@ -672,10 +859,23 @@ const ProgramMonitor: React.FC = () => {
               width: displaySize.width,
               height: displaySize.height,
               backgroundColor,
-              display: displayMode === 'video' ? 'block' : 'none',
+              display: displayMode === 'video' && !sourcePlaybackInfo?.enabled ? 'block' : 'none',
             }}
           />
         )}
+
+        {/* Source video element - for direct source file playback (progressive) */}
+        <video
+          ref={sourceVideoRef}
+          className="program-preview-video"
+          muted={isMuted}
+          style={{
+            width: displaySize.width,
+            height: displaySize.height,
+            backgroundColor,
+            display: displayMode === 'video' && sourcePlaybackInfo?.enabled ? 'block' : 'none',
+          }}
+        />
 
         {/* Canvas - for pause/scrub display (full quality from source) */}
         <canvas

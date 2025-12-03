@@ -146,6 +146,10 @@ const electronAPI = {
     // Extract a single frame (for scrub/pause) - returns RGBA pixel data
     extractFrame: (time: number) => ipcRenderer.invoke('preview:extractFrame', time),
 
+    // Prefetch frames for smoother playback
+    prefetchFrames: (time: number, count?: number, direction?: -1 | 1) =>
+      ipcRenderer.invoke('preview:prefetchFrames', { time, count, direction }),
+
     // Scrub mode
     scrubStart: (time: number) => ipcRenderer.invoke('preview:scrubStart', time),
     scrubUpdate: (time: number, velocity: number) =>

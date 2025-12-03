@@ -79,6 +79,9 @@ export interface HybridPreviewActions {
   clearCache: () => Promise<void>;
   invalidateRange: (startTime: number, endTime: number) => Promise<void>;
   prioritizeChunks: (time: number) => Promise<void>;
+
+  // Frame prefetching for smoother playback
+  prefetchFrames: (time: number, count?: number, direction?: -1 | 1) => Promise<void>;
 }
 
 export function useHybridPreview(): [HybridPreviewState, HybridPreviewActions] {
@@ -403,6 +406,12 @@ export function useHybridPreview(): [HybridPreviewState, HybridPreviewActions] {
     await window.electronAPI.preview.prioritizeChunks(time);
   }, []);
 
+  // Prefetch frames for smoother playback
+  const prefetchFrames = useCallback(async (time: number, count?: number, direction?: -1 | 1) => {
+    if (!window.electronAPI) return;
+    await window.electronAPI.preview.prefetchFrames(time, count, direction);
+  }, []);
+
   // State object
   const state: HybridPreviewState = {
     isInitialized,
@@ -426,6 +435,7 @@ export function useHybridPreview(): [HybridPreviewState, HybridPreviewActions] {
     clearCache,
     invalidateRange,
     prioritizeChunks,
+    prefetchFrames,
   };
 
   return [state, actions];

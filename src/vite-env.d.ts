@@ -141,6 +141,9 @@ interface ElectronAPI {
       error?: string;
     }>;
 
+    // Prefetch frames for smoother playback
+    prefetchFrames: (time: number, count?: number, direction?: -1 | 1) => Promise<void>;
+
     // Scrub mode
     scrubStart: (time: number) => Promise<{ success: boolean }>;
     scrubUpdate: (time: number, velocity: number) => Promise<{
