@@ -146,6 +146,16 @@ Projects are saved as `.chopchop` files (JSON):
 }
 ```
 
+### Source Resolution vs Sequence Resolution
+
+**Important:** Source and sequence resolutions are independent. Clips are **not** auto-scaled to fit the sequence.
+
+- A 854x480 clip in a 1920x1080 sequence will display with **pillarboxes** (black bars)
+- A 4K clip in a 1080p sequence will appear **cropped/zoomed** (centered)
+- This matches professional NLE behavior (Premiere, DaVinci, Final Cut)
+
+To scale a clip to fit the sequence, users must explicitly use "Scale to Frame Size" in the inspector.
+
 ### Preview System
 
 ChopChop uses **chunked pre-rendering** for preview playback:

@@ -1,268 +1,289 @@
-# Implementation Plan: Project Save/Load + Export
+# Multitrack Implementation Plan
 
 ## Overview
 
-This plan covers two major features:
-1. **Project Save/Load** - Save timeline state to `.chpchp` files
-2. **Video Export** - Export timeline to video with rich options and progress display
+Implement multitrack video and audio support with:
+- Default 2 video tracks (V1, V2) and 2 audio tracks (A1, A2)
+- Add/delete track functionality via mini-toolbar
+- Delete constraints: minimum 1 of each type, track must be empty
 
----
+## Current State Analysis
 
-## Part 1: Project Save/Load (.chpchp files)
+### What Already Works
+- Timeline supports unlimited tracks (array-based)
+- graphBuilder processes all video and audio tracks
+- Playback/ProgramMonitor uses `flatMap` to iterate all tracks
+- Track headers render in Timeline.tsx
 
-### File Format
+### Current Limitations (Out of Scope for This Task)
+- Export concatenates clips rather than layering/mixing (would need overlay/amix filters)
+- This is acceptable for v0.2 - true layering is a future enhancement
 
-The `.chpchp` file is a JSON file containing:
-```json
-{
-  "version": "0.1.0",
-  "name": "My Project",
-  "settings": { /* ProjectSettings */ },
-  "media": [
-    {
-      "id": "...",
-      "name": "clip.mp4",
-      "path": "C:/videos/clip.mp4",
-      "type": "video",
-      "duration": 30.5,
-      "metadata": { /* MediaMetadata */ }
-      // Note: thumbnailPath and waveformData are regenerated on load
-    }
-  ],
-  "timeline": {
-    "tracks": [ /* Track[] */ ],
-    "playheadPosition": 0,
-    "inPoint": null,
-    "outPoint": null,
-    "markers": [],
-    "zoom": 50,
-    "scrollX": 0
+## Implementation Steps
+
+### 1. Update Default Track Initialization (App.tsx)
+
+**File:** `src/App.tsx` (lines 310-334)
+
+Change from 1 video + 1 audio to 2 of each:
+
+```typescript
+// Add default video and audio tracks
+dispatch(addTrack({
+  id: 'video-2', name: 'V2', type: 'video', clips: [], locked: false, muted: false, visible: true, volume: 1,
+}));
+dispatch(addTrack({
+  id: 'video-1', name: 'V1', type: 'video', clips: [], locked: false, muted: false, visible: true, volume: 1,
+}));
+dispatch(addTrack({
+  id: 'audio-1', name: 'A1', type: 'audio', clips: [], locked: false, muted: false, visible: true, volume: 1,
+}));
+dispatch(addTrack({
+  id: 'audio-2', name: 'A2', type: 'audio', clips: [], locked: false, muted: false, visible: true, volume: 1,
+}));
+```
+
+**Track Order Convention:**
+- Video tracks: Higher number = higher layer (V2 above V1 visually, rendered on top during compositing)
+- Audio tracks: A1 first, A2 second (order is less critical for audio)
+- In array: V2, V1, A1, A2 (video tracks first, then audio - top to bottom in UI)
+
+### 2. Add Track Management UI (Timeline.tsx)
+
+**File:** `src/components/Timeline/Timeline.tsx`
+
+#### 2a. Add Track Toolbar Component
+
+Add a mini-toolbar at the bottom of track headers section with:
+- "+" button for video tracks
+- "+" button for audio tracks
+- Visual separator between button groups
+
+```tsx
+{/* Track management toolbar */}
+<div className="track-toolbar">
+  <button onClick={handleAddVideoTrack} title="Add Video Track">
+    <Plus size={12} /> V
+  </button>
+  <button onClick={handleAddAudioTrack} title="Add Audio Track">
+    <Plus size={12} /> A
+  </button>
+</div>
+```
+
+#### 2b. Add Delete Button to Track Headers
+
+Each track header gets a delete button (X) that:
+- Is only visible/enabled when:
+  - Track has 0 clips (track.clips.length === 0)
+  - There's more than 1 track of that type
+- Shows tooltip explaining why disabled if constraints not met
+
+```tsx
+<div className="track-header">
+  <span className="track-name">{track.name}</span>
+  <div className="track-controls">
+    <button className="track-toggle" title="Mute">M</button>
+    <button className="track-toggle" title="Solo">S</button>
+    <button className="track-toggle" title="Lock">L</button>
+    {canDeleteTrack(track) && (
+      <button
+        className="track-delete"
+        onClick={() => handleDeleteTrack(track.id)}
+        title="Delete Track"
+      >
+        <X size={12} />
+      </button>
+    )}
+  </div>
+</div>
+```
+
+#### 2c. Implement Handler Functions
+
+```typescript
+// Check if track can be deleted
+const canDeleteTrack = useCallback((track: Track): boolean => {
+  // Must have no clips
+  if (track.clips.length > 0) return false;
+
+  // Must have at least 1 other track of same type
+  const sameTypeTracks = tracks.filter(t => t.type === track.type);
+  return sameTypeTracks.length > 1;
+}, [tracks]);
+
+// Add video track
+const handleAddVideoTrack = useCallback(() => {
+  const videoTracks = tracks.filter(t => t.type === 'video');
+  const newNumber = videoTracks.length + 1;
+  const newTrack: Track = {
+    id: `video-${Date.now()}`,
+    name: `V${newNumber}`,
+    type: 'video',
+    clips: [],
+    locked: false,
+    muted: false,
+    visible: true,
+    volume: 1,
+  };
+  dispatch(addTrack(newTrack));
+}, [tracks, dispatch]);
+
+// Add audio track
+const handleAddAudioTrack = useCallback(() => {
+  const audioTracks = tracks.filter(t => t.type === 'audio');
+  const newNumber = audioTracks.length + 1;
+  const newTrack: Track = {
+    id: `audio-${Date.now()}`,
+    name: `A${newNumber}`,
+    type: 'audio',
+    clips: [],
+    locked: false,
+    muted: false,
+    visible: true,
+    volume: 1,
+  };
+  dispatch(addTrack(newTrack));
+}, [tracks, dispatch]);
+
+// Delete track
+const handleDeleteTrack = useCallback((trackId: string) => {
+  const track = tracks.find(t => t.id === trackId);
+  if (track && canDeleteTrack(track)) {
+    dispatch(removeTrack(trackId));
   }
+}, [tracks, canDeleteTrack, dispatch]);
+```
+
+### 3. Add Track Insertion Logic (timelineSlice.ts)
+
+**File:** `src/store/timelineSlice.ts`
+
+Currently `addTrack` just pushes to the end. We need smarter insertion to maintain order:
+- Video tracks should be grouped at the top
+- Audio tracks should be grouped at the bottom
+
+```typescript
+addTrack: (state, action: PayloadAction<Track>) => {
+  const newTrack = action.payload;
+
+  if (newTrack.type === 'video') {
+    // Insert at end of video tracks (before first audio track)
+    const firstAudioIndex = state.tracks.findIndex(t => t.type === 'audio');
+    if (firstAudioIndex === -1) {
+      state.tracks.push(newTrack);
+    } else {
+      state.tracks.splice(firstAudioIndex, 0, newTrack);
+    }
+  } else {
+    // Audio track - push to end
+    state.tracks.push(newTrack);
+  }
+},
+```
+
+### 4. Add CSS Styles (Timeline.css)
+
+**File:** `src/components/Timeline/Timeline.css`
+
+```css
+/* Track toolbar at bottom of headers */
+.track-toolbar {
+  display: flex;
+  gap: 4px;
+  padding: 8px;
+  background-color: var(--bg-secondary);
+  border-top: 1px solid var(--border-color);
+}
+
+.track-toolbar button {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px;
+  font-size: 11px;
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.track-toolbar button:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* Track delete button */
+.track-delete {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: transparent;
+  border: none;
+  border-radius: 2px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s, color 0.2s;
+}
+
+.track-header:hover .track-delete {
+  opacity: 1;
+}
+
+.track-delete:hover {
+  color: var(--error-red);
+  background-color: rgba(255, 100, 100, 0.1);
 }
 ```
 
-### Implementation Steps
+### 5. Update Clip Placement for Multitrack (Timeline.tsx)
 
-1. **Add IPC handlers in `electron/main.ts`:**
-   - `project:showOpenDialog` - Show file picker for .chpchp files
-   - `project:showSaveDialog` - Show save dialog with .chpchp extension
+**File:** `src/components/Timeline/Timeline.tsx` (handleTrackDrop)
 
-2. **Update `electron/preload.ts`:**
-   - Add `project.showOpenDialog()` and `project.showSaveDialog()` APIs
+When dropping a clip, if dropping on wrong track type, find the first track of correct type:
 
-3. **Add save/load logic in App.tsx or new hook:**
-   - `saveProject()` - Serialize state and write to file
-   - `loadProject()` - Read file, parse, restore state, regenerate thumbnails/waveforms
-
-4. **Add keyboard shortcuts:**
-   - `Ctrl+S` - Save (save to current path, or show Save As if new)
-   - `Ctrl+Shift+S` - Save As (always show dialog)
-   - `Ctrl+O` - Open project
-
-5. **Add status bar indicator for dirty state**
-
----
-
-## Part 2: Export Dialog & Video Export
-
-### Export Dialog Component
-
-Create `src/components/ExportDialog/ExportDialog.tsx`:
-
-**Layout:**
-```
-┌─────────────────────────────────────────────────────────────┐
-│                         Export                          [X] │
-├─────────────────────────────────────────────────────────────┤
-│ Output: [________________________] [Browse...]              │
-├─────────────────────────────────────────────────────────────┤
-│                        PRESETS                              │
-│ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐            │
-│ │YouTube  │ │YouTube  │ │Twitter/X│ │ Custom  │            │
-│ │ 1080p   │ │  4K     │ │         │ │         │            │
-│ └─────────┘ └─────────┘ └─────────┘ └─────────┘            │
-├─────────────────────────────────────────────────────────────┤
-│ [▼] Video Settings                                          │
-│    Format:     [mp4 ▼]                                      │
-│    Codec:      [H.264 (libx264) ▼]                         │
-│    Resolution: [1920x1080 ▼] or [Source ▼]                 │
-│    Frame Rate: [30 ▼] or [Source ▼]                        │
-│    Quality:    [───●──────────] CRF: 18                    │
-│    Preset:     [slow ▼] (slower = smaller file)            │
-│                                                             │
-│ [▼] Audio Settings                                          │
-│    Codec:      [AAC ▼]                                      │
-│    Bitrate:    [192k ▼]                                     │
-│    Sample Rate:[48000 ▼]                                    │
-│    Channels:   [Stereo ▼]                                   │
-│                                                             │
-│ [▼] Advanced                                                │
-│    [x] Use GPU encoding (if available)                      │
-│    Custom args: [________________________]                  │
-├─────────────────────────────────────────────────────────────┤
-│ Duration: 00:05:30  Est. Size: ~250 MB                      │
-├─────────────────────────────────────────────────────────────┤
-│                    [Cancel]  [Export]                       │
-└─────────────────────────────────────────────────────────────┘
+```typescript
+// In handleTrackDrop, when type === 'both':
+// Find the first available video and audio tracks
+const videoTrack = track.type === 'video'
+  ? track
+  : tracks.find(t => t.type === 'video');
+const audioTrack = track.type === 'audio'
+  ? track
+  : tracks.find(t => t.type === 'audio');
 ```
 
-**During Export (replaces dialog content):**
-```
-┌─────────────────────────────────────────────────────────────┐
-│                       Exporting...                          │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│    ████████████████████░░░░░░░░░░░░░░ 65%                  │
-│                                                             │
-│    Time: 00:03:34 / 00:05:30                               │
-│    Speed: 1.5x                                              │
-│    ETA: ~1 min 20 sec                                       │
-│                                                             │
-├─────────────────────────────────────────────────────────────┤
-│                        [Cancel]                             │
-└─────────────────────────────────────────────────────────────┘
-```
+This logic already exists and works correctly for multitrack.
 
-### Implementation Steps
+## File Changes Summary
 
-#### Backend (electron/)
+| File | Changes |
+|------|---------|
+| `src/App.tsx` | Update default tracks: 2 video + 2 audio |
+| `src/store/timelineSlice.ts` | Smart track insertion to maintain order |
+| `src/components/Timeline/Timeline.tsx` | Add track toolbar, delete buttons, handlers |
+| `src/components/Timeline/Timeline.css` | Styles for toolbar and delete button |
 
-1. **Create `electron/ffmpeg/graphBuilder.ts`:**
-   - `buildFilterGraph(timeline, media)` - Generates ffmpeg filter_complex
-   - Handles: clip trimming, track stacking, audio mixing
-   - Returns: { inputs: InputDef[], filterComplex: string, maps: string[] }
+## Testing Checklist
 
-2. **Create `electron/ffmpeg/exporter.ts`:**
-   - `exportTimeline(timeline, media, settings, onProgress)` - Main export function
-   - Calls graphBuilder to construct command
-   - Uses `runFFmpegWithProgress` to execute
-   - Returns promise that resolves when complete
+- [ ] App starts with 2 video and 2 audio tracks
+- [ ] Can add video track (appears after existing video tracks)
+- [ ] Can add audio track (appears after existing audio tracks)
+- [ ] Can delete empty track (when > 1 of that type)
+- [ ] Cannot delete track with clips
+- [ ] Cannot delete last video track
+- [ ] Cannot delete last audio track
+- [ ] Dropping clips works on any track
+- [ ] Playback works with clips on multiple tracks
+- [ ] Export works with clips on multiple tracks
+- [ ] Project save/load preserves track structure
 
-3. **Add IPC handlers in `electron/main.ts`:**
-   - `export:start` - Start export, returns export job ID
-   - `export:cancel` - Cancel running export
-   - `export:progress` - Send progress updates to renderer (via event)
+## Future Considerations (Out of Scope)
 
-4. **Update `electron/preload.ts`:**
-   - Add `export.start(settings)`, `export.cancel(jobId)`
-   - Add `export.onProgress(callback)` for progress events
-
-#### Frontend (src/)
-
-1. **Create Redux slice `src/store/exportSlice.ts`:**
-   - State: { isExporting, progress, currentJobId, error }
-   - Actions: startExport, updateProgress, cancelExport, exportComplete, exportError
-
-2. **Create `src/components/ExportDialog/ExportDialog.tsx`:**
-   - Modal dialog component
-   - Preset selection (from DEFAULT_EXPORT_PRESETS)
-   - Collapsible sections for Video/Audio/Advanced settings
-   - Export button triggers export
-   - Progress view during export
-
-3. **Create `src/components/ExportDialog/ExportDialog.css`:**
-   - Modal overlay styling
-   - Form controls styling
-   - Progress bar styling
-
-4. **Add to App.tsx:**
-   - State for dialog visibility
-   - Keyboard shortcut `Ctrl+E` to open export dialog
-   - Render ExportDialog conditionally
-
----
-
-## Filter Graph Building Strategy
-
-For the initial implementation, support a simplified timeline model:
-
-### Phase 1 (This Implementation)
-- Single video track with sequential clips
-- Single audio track with sequential clips
-- Basic trim (mediaIn/mediaOut) support
-- No transitions, effects, or layering yet
-
-### Example Output
-For a timeline with 2 video clips and 2 audio clips:
-```bash
-ffmpeg \
-  -i "clip1.mp4" \
-  -i "clip2.mp4" \
-  -filter_complex "
-    [0:v]trim=start=0:end=5,setpts=PTS-STARTPTS[v0];
-    [1:v]trim=start=2:end=7,setpts=PTS-STARTPTS[v1];
-    [v0][v1]concat=n=2:v=1:a=0[vout];
-    [0:a]atrim=start=0:end=5,asetpts=PTS-STARTPTS[a0];
-    [1:a]atrim=start=2:end=7,asetpts=PTS-STARTPTS[a1];
-    [a0][a1]concat=n=2:v=0:a=1[aout]
-  " \
-  -map "[vout]" -map "[aout]" \
-  -c:v libx264 -crf 18 -preset slow \
-  -c:a aac -b:a 192k \
-  output.mp4
-```
-
----
-
-## File Structure Summary
-
-```
-electron/
-  main.ts                    # Add project/export IPC handlers
-  preload.ts                 # Add project/export APIs
-  ffmpeg/
-    runner.ts                # (existing)
-    probe.ts                 # (existing)
-    graphBuilder.ts          # NEW - Timeline to filter graph
-    exporter.ts              # NEW - Export orchestration
-
-src/
-  store/
-    exportSlice.ts           # NEW - Export state management
-  components/
-    ExportDialog/
-      ExportDialog.tsx       # NEW - Export dialog UI
-      ExportDialog.css       # NEW - Dialog styling
-  App.tsx                    # Add save/load/export shortcuts & dialog
-```
-
----
-
-## Keyboard Shortcuts Summary
-
-| Shortcut | Action |
-|----------|--------|
-| Ctrl+S | Save Project |
-| Ctrl+Shift+S | Save Project As |
-| Ctrl+O | Open Project |
-| Ctrl+M | Export (Make) |
-
----
-
-## Estimated Complexity
-
-1. **Project Save/Load**: Low-medium complexity
-   - JSON serialization is straightforward
-   - Need to handle thumbnail/waveform regeneration on load
-
-2. **Export Dialog UI**: Medium complexity
-   - Modal with form controls
-   - Preset selection
-   - Progress display
-
-3. **Filter Graph Builder**: High complexity (but starting simple)
-   - Phase 1: Just concat clips, basic trim
-   - Future: Handle layering, effects, transitions
-
-4. **Export Backend**: Medium complexity
-   - Already have runFFmpegWithProgress
-   - Need IPC for progress events
-
----
-
-## Ready to Implement
-
-This plan covers the full implementation. I'll proceed in this order:
-1. Project Save/Load (simpler, foundational)
-2. Export Dialog UI (can work with mock progress)
-3. Filter Graph Builder + Export Backend (complete the loop)
+- **Video layering**: Currently clips across video tracks are concatenated. True compositing requires implementing `overlay` filter in graphBuilder.
+- **Audio mixing**: Currently clips across audio tracks are concatenated. True mixing requires implementing `amix` filter in graphBuilder.
+- These are significant enhancements for a future version.

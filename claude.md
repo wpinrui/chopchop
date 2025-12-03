@@ -20,6 +20,55 @@ This file provides context for AI-assisted development (vibe-coding) of ChopChop
 
 ---
 
+## ⚠️ CRITICAL: Source Resolution vs Sequence Resolution
+
+**THIS IS NON-NEGOTIABLE. READ THIS CAREFULLY.**
+
+Source resolution and sequence resolution are **COMPLETELY INDEPENDENT**. Clips are **NEVER** auto-scaled to fit the sequence.
+
+### The Rule
+
+- **Sequence resolution**: The dimensions of the timeline/project output (e.g., 1920x1080)
+- **Source resolution**: The dimensions of the imported media file (e.g., 854x480)
+- **These are independent.** A clip maintains its native resolution when placed on the timeline.
+
+### Expected Behavior
+
+| Sequence | Source | Result |
+|----------|--------|--------|
+| 1920x1080 | 854x480 | **Pillarboxes** (black bars on sides) — clip appears centered at native size |
+| 1920x1080 | 3840x2160 | **Clip exceeds frame** — centered, edges cropped |
+| 1920x1080 | 1920x1080 | Perfect fit, no scaling |
+| 1920x1080 | 1280x720 | **Pillarboxes + letterboxes** — clip centered at native size |
+
+### What This Means for Implementation
+
+1. **Preview rendering**: Must pad/crop to sequence dimensions, NOT scale source to fit
+2. **Export**: Same — output is always sequence resolution, sources are positioned at native size
+3. **ffmpeg filters**: Use `pad` filter to add black bars, NOT `scale` to stretch
+4. **User can manually scale**: If user WANTS to scale, they use Scale to Frame Size (explicit action)
+
+### Example ffmpeg for 854x480 source in 1920x1080 sequence
+
+```bash
+# CORRECT - pad to sequence resolution (pillarboxes)
+ffmpeg -i source_854x480.mp4 -vf "pad=1920:1080:(1920-854)/2:(1080-480)/2:black" output.mp4
+
+# WRONG - scaling destroys aspect ratio or quality
+ffmpeg -i source_854x480.mp4 -vf "scale=1920:1080" output.mp4  # NEVER DO THIS AUTOMATICALLY
+```
+
+### Why This Matters
+
+This is how **every professional NLE works** (Premiere, DaVinci, Final Cut). Users expect:
+- Imported 480p phone video to appear small in a 1080p sequence
+- 4K footage to be "zoomed in" when placed in 1080p sequence
+- Explicit control over scaling (via inspector properties, not automatic)
+
+**DO NOT implement auto-scaling. EVER.**
+
+---
+
 ## Tech Stack
 
 | Concern | Choice | Notes |
@@ -518,6 +567,8 @@ When enabled:
 
 7. **Never assume bash** — Dev environment is PowerShell. Use cross-platform npm scripts where possible.
 
+8. **NEVER auto-scale clips to fit sequence** — Source resolution and sequence resolution are independent. A 480p clip in a 1080p sequence shows pillarboxes, not stretched video. Use `pad` filter to position clips, never `scale` automatically. See the "CRITICAL: Source Resolution vs Sequence Resolution" section above.
+
 ---
 
 ## Useful ffmpeg Commands Reference
@@ -560,6 +611,7 @@ Before marking a feature complete:
 - [ ] Works with various input formats (mp4, mov, mkv, webm)
 - [ ] Works with various resolutions (720p, 1080p, 4K)
 - [ ] Works with various frame rates (24, 30, 60 fps)
+- [ ] **Mismatched resolutions display correctly** — e.g., 480p clip in 1080p sequence shows pillarboxes, NOT stretched/scaled
 - [ ] Undo/redo works correctly
 - [ ] Preview updates correctly
 - [ ] Export produces correct output
